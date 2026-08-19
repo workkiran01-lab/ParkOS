@@ -33,6 +33,10 @@ npm run dev
 
 Secrets: `.env.local` is gitignored and holds only the publishable (anon) key. The secret (service-role) key and DB passwords must never appear in this repo.
 
+## Deployment
+
+Vercel auto-deploys `main` to production and every PR to a preview URL. Both environments are currently backed by **parkos-dev**; parkos-prod is provisioned but not wired up until launch prep. CI (lint, type-check, build) runs on GitHub Actions for pushes to `main` and PRs targeting it.
+
 ## Scripts
 
 - `npm run dev` — Vite dev server
