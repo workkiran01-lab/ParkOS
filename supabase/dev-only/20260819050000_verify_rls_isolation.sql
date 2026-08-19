@@ -21,9 +21,10 @@ begin
     raise exception 'CHECK0 FAIL: expected 13 RLS-enabled tables, found %', v;
   end if;
 
+  -- 36 through Week 4, +1 in Week 5 (space_holds_update for release-early).
   select count(*) into v from pg_policies where schemaname = 'public';
-  if v <> 36 then
-    raise exception 'CHECK0 FAIL: expected 36 policies, found %', v;
+  if v <> 37 then
+    raise exception 'CHECK0 FAIL: expected 37 policies, found %', v;
   end if;
 
   select count(*) into v
@@ -36,7 +37,7 @@ begin
   if v <> 5 then
     raise exception 'CHECK0 FAIL: helper functions missing or not SECURITY DEFINER (found %)', v;
   end if;
-  raise notice 'CHECK0 PASS: 13 RLS tables, 36 policies, 5 SECURITY DEFINER functions';
+  raise notice 'CHECK0 PASS: 13 RLS tables, 37 policies, 5 SECURITY DEFINER functions';
 end $$;
 
 -- ---------------------------------------------------------------------------
@@ -324,7 +325,7 @@ end $$;
 -- completes, return an explicit, machine-visible summary for CI/manual evidence.
 select check_name, result
 from (values
-  ('CHECK0',  'PASS: 13 RLS tables, 36 policies, 5 SECURITY DEFINER functions'),
+  ('CHECK0',  'PASS: 13 RLS tables, 37 policies, 5 SECURITY DEFINER functions'),
   ('CHECK0b', 'PASS: authenticated has S/I/U/D grants on all 13 RLS tables'),
   ('CHECK1',  'PASS: Org A sees exactly 2 facilities / 165 spaces, all Org A'),
   ('CHECK1b', 'PASS: Org B sees exactly 1 facility / 10 spaces, all Org B'),
