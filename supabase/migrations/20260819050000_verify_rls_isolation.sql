@@ -1,0 +1,205 @@
+-- RLS isolation VERIFICATION migration (assertion-only; changes no schema, no data).
+-- Companion to supabase/tests/rls_isolation_checks.sql (the interactive SQL-editor
+-- version). This file exists so the checks run ON THE REMOTE as part of `db push`:
+-- every block RAISES EXCEPTION on failure, which aborts the push with the message.
+-- If this migration is recorded in schema_migrations, every check below PASSED there.
+--
+-- Depends on the dev seed (20260819040100); like the seed, dev-project only.
+
+-- ---------------------------------------------------------------------------
+-- CHECK 0: the DDL actually landed — 8 RLS-enabled tables, 27 policies,
+-- both helpers present and SECURITY DEFINER.
+-- ---------------------------------------------------------------------------
+do $$
+declare v int;
+begin
+  select count(*) into v from pg_tables
+   where schemaname = 'public' and rowsecurity
+     and tablename in ('organizations','profiles','memberships','facilities',
+                       'zones','spaces','customers','vehicles');
+  if v <> 8 then
+    raise exception 'CHECK0 FAIL: expected 8 RLS-enabled tables, found %', v;
+  end if;
+
+  select count(*) into v from pg_policies where schemaname = 'public';
+  if v <> 27 then
+    raise exception 'CHECK0 FAIL: expected 27 policies, found %', v;
+  end if;
+
+  select count(*) into v
+    from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+   where n.nspname = 'public'
+     and p.proname in ('get_user_role','has_any_role')
+     and p.prosecdef;
+  if v <> 2 then
+    raise exception 'CHECK0 FAIL: helper functions missing or not SECURITY DEFINER (found %)', v;
+  end if;
+  raise notice 'CHECK0 PASS: 8 RLS tables, 27 policies, 2 SECURITY DEFINER helpers';
+end $$;
+
+-- ---------------------------------------------------------------------------
+-- CHECK 0b: table privileges for `authenticated` are what migration 040000
+-- granted. First push attempt failed with GRANT-level "permission denied for
+-- table customers" (not an RLS denial), implying grants were missing/revoked
+-- on the remote. This block names exactly which table/privilege pairs are
+-- absent so the failure is diagnosable from the push output alone.
+-- ---------------------------------------------------------------------------
+do $$
+declare
+  t text; p text; missing text := '';
+begin
+  foreach t in array array['organizations','profiles','memberships','facilities',
+                           'zones','spaces','customers','vehicles'] loop
+    foreach p in array array['SELECT','INSERT','UPDATE','DELETE'] loop
+      if not has_table_privilege('authenticated', 'public.' || t, p) then
+        missing := missing || t || ':' || p || ' ';
+      end if;
+    end loop;
+  end loop;
+  if missing <> '' then
+    raise exception 'CHECK0b FAIL: authenticated is missing grants: %', missing;
+  end if;
+  raise notice 'CHECK0b PASS: authenticated holds S/I/U/D on all 8 tables';
+end $$;
+
+-- ---------------------------------------------------------------------------
+-- CHECK 1: As Org A admin — sees exactly 2 facilities, all Org A; 165 spaces.
+-- ---------------------------------------------------------------------------
+do $$
+declare v int; v_role text := current_user;
+begin
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000a1","role":"authenticated"}', true);
+  perform set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-0000000000a1', true);
+  execute 'set local role authenticated';
+
+  select count(*) into v from public.facilities;
+  if v <> 2 then raise exception 'CHECK1 FAIL: Org A admin sees % facilities, expected 2', v; end if;
+
+  select count(*) into v from public.facilities
+   where org_id <> 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+  if v <> 0 then raise exception 'CHECK1 FAIL: Org A admin sees % foreign-org facilities — LEAK', v; end if;
+
+  select count(*) into v from public.spaces;
+  if v <> 165 then raise exception 'CHECK1 FAIL: Org A admin sees % spaces, expected 165', v; end if;
+
+  execute format('set local role %I', v_role);
+  raise notice 'CHECK1 PASS: Org A admin sees exactly 2 facilities / 165 spaces, all Org A';
+end $$;
+
+-- ---------------------------------------------------------------------------
+-- CHECK 1b: As Org B admin — the mirror: 1 facility, 10 spaces, all Org B.
+-- ---------------------------------------------------------------------------
+do $$
+declare v int; v_role text := current_user;
+begin
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000b1","role":"authenticated"}', true);
+  perform set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-0000000000b1', true);
+  execute 'set local role authenticated';
+
+  select count(*) into v from public.facilities;
+  if v <> 1 then raise exception 'CHECK1b FAIL: Org B admin sees % facilities, expected 1', v; end if;
+  select count(*) into v from public.facilities
+   where org_id <> 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb';
+  if v <> 0 then raise exception 'CHECK1b FAIL: Org B admin sees % foreign-org facilities — LEAK', v; end if;
+  select count(*) into v from public.spaces;
+  if v <> 10 then raise exception 'CHECK1b FAIL: Org B admin sees % spaces, expected 10', v; end if;
+
+  execute format('set local role %I', v_role);
+  raise notice 'CHECK1b PASS: Org B admin sees exactly 1 facility / 10 spaces, all Org B';
+end $$;
+
+-- ---------------------------------------------------------------------------
+-- CHECK 2: As Org A admin, inserting a facility with Org B's org_id MUST fail
+-- with an RLS violation (SQLSTATE 42501). If the insert SUCCEEDS, isolation is
+-- broken and we abort loudly.
+-- ---------------------------------------------------------------------------
+do $$
+declare v_role text := current_user;
+begin
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000a1","role":"authenticated"}', true);
+  perform set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-0000000000a1', true);
+  execute 'set local role authenticated';
+
+  begin
+    insert into public.facilities (org_id, name)
+    values ('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', 'CROSS-ORG INJECTION ATTEMPT');
+    -- Reaching this line means the insert was ALLOWED -> isolation broken.
+    raise exception 'CHECK2 FAIL: cross-org insert SUCCEEDED — RLS isolation is broken';
+  exception
+    when sqlstate '42501' then
+      -- Both RLS denials and missing GRANTs raise 42501; only the RLS message
+      -- proves isolation. A grant-level denial would mask an RLS hole.
+      if sqlerrm not like '%row-level security%' then
+        raise exception 'CHECK2 FAIL: denied by GRANTs not RLS ("%") — RLS unproven', sqlerrm;
+      end if;
+  end;
+
+  execute format('set local role %I', v_role);
+  raise notice 'CHECK2 PASS: cross-org insert rejected with RLS violation (42501)';
+end $$;
+
+-- ---------------------------------------------------------------------------
+-- CHECK 3: As Org A admin, SELECT on memberships must return 6 rows and must
+-- NOT raise "infinite recursion detected in policy" (SQLSTATE 42P17). This is
+-- the specific proof the SECURITY DEFINER helper pattern avoided the trap —
+-- any recursion error here propagates and fails the push with that message.
+-- ---------------------------------------------------------------------------
+do $$
+declare v int; v_role text := current_user;
+begin
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000a1","role":"authenticated"}', true);
+  perform set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-0000000000a1', true);
+  execute 'set local role authenticated';
+
+  select count(*) into v from public.memberships;   -- recursion would raise 42P17 HERE
+  if v <> 6 then raise exception 'CHECK3 FAIL: Org A admin sees % memberships, expected 6', v; end if;
+
+  select count(*) into v from public.memberships
+   where org_id <> 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+  if v <> 0 then raise exception 'CHECK3 FAIL: sees % foreign-org memberships — LEAK', v; end if;
+
+  execute format('set local role %I', v_role);
+  raise notice 'CHECK3 PASS: memberships returned 6 rows, no recursion error';
+end $$;
+
+-- ---------------------------------------------------------------------------
+-- CHECK 4: Role gradation. An Org A ATTENDANT cannot create a facility
+-- (admin+manager only) but CAN create a customer (attendant allowed).
+-- The successful customer row is deleted afterwards as postgres (owner bypasses
+-- RLS), so this migration remains data-neutral.
+-- ---------------------------------------------------------------------------
+do $$
+declare v int; v_role text := current_user;
+begin
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000a3","role":"authenticated"}', true);
+  perform set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-0000000000a3', true);
+  execute 'set local role authenticated';
+
+  begin
+    insert into public.facilities (org_id, name)
+    values ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'Attendant-made facility');
+    raise exception 'CHECK4 FAIL: attendant created a facility — role gradation broken';
+  exception
+    when sqlstate '42501' then
+      if sqlerrm not like '%row-level security%' then
+        raise exception 'CHECK4 FAIL: denied by GRANTs not RLS ("%") — gradation unproven', sqlerrm;
+      end if;
+  end;
+
+  insert into public.customers (org_id, full_name)
+  values ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '__RLS_CHECK_TEMP_CUSTOMER__');
+
+  execute format('set local role %I', v_role);
+
+  -- cleanup as postgres; verify exactly the one temp row existed and is gone
+  delete from public.customers where full_name = '__RLS_CHECK_TEMP_CUSTOMER__';
+  get diagnostics v = row_count;
+  if v <> 1 then raise exception 'CHECK4 FAIL: expected to clean up 1 temp customer, cleaned %', v; end if;
+
+  raise notice 'CHECK4 PASS: attendant blocked from facilities, allowed on customers';
+end $$;
