@@ -1,12 +1,26 @@
 import { Outlet, createRootRoute, Link } from '@tanstack/react-router'
+import { TanStackRouterDevtools } from '@tanstack/react-router-devtools'
+import { Toaster } from 'sonner'
+import { ErrorFallback } from '@/components/ui/ErrorFallback'
+import { PageSpinner } from '@/components/ui/Spinner'
 
 export const Route = createRootRoute({
   component: RootLayout,
+  errorComponent: ErrorFallback,
+  pendingComponent: PageSpinner,
   notFoundComponent: NotFound,
 })
 
 function RootLayout() {
-  return <Outlet />
+  return (
+    <>
+      <Outlet />
+      <Toaster position="top-right" richColors />
+      {import.meta.env.DEV && (
+        <TanStackRouterDevtools position="bottom-right" />
+      )}
+    </>
+  )
 }
 
 function NotFound() {
