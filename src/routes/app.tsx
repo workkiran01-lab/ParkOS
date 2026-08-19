@@ -54,6 +54,11 @@ function AppLayout() {
             <li>
               <NavLink to="/app/onboarding">Onboarding</NavLink>
             </li>
+            {(role === 'admin' || role === 'manager' || role === 'attendant') && (
+              <li>
+                <NavLink to="/app/availability">Availability</NavLink>
+              </li>
+            )}
             {(role === 'admin' || role === 'manager') && (
               <li>
                 <NavLink to="/app/facilities">Facilities</NavLink>
@@ -85,7 +90,12 @@ function NavLink({
   to,
   children,
 }: {
-  to: '/app' | '/app/onboarding' | '/app/staff' | '/app/facilities'
+  to:
+    | '/app'
+    | '/app/onboarding'
+    | '/app/staff'
+    | '/app/facilities'
+    | '/app/availability'
   children: string
 }) {
   return (

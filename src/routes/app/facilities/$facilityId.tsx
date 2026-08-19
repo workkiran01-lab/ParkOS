@@ -2,6 +2,10 @@ import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { toast } from 'sonner'
 import { MaintenanceSection } from '@/components/facility/MaintenanceSection'
+import {
+  PricingSection,
+  type PriceRuleRow,
+} from '@/components/facility/PricingSection'
 import { SpacesSection } from '@/components/facility/SpacesSection'
 import { ZonesSection } from '@/components/facility/ZonesSection'
 import { Badge } from '@/components/ui/badge'
@@ -40,6 +44,7 @@ function FacilityDetail() {
   const [zones, setZones] = useState<ZoneRow[]>([])
   const [spaces, setSpaces] = useState<SpaceRow[]>([])
   const [holds, setHolds] = useState<HoldRow[]>([])
+  const [rules, setRules] = useState<PriceRuleRow[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -119,6 +124,20 @@ function FacilityDetail() {
       }
     }
 
+    const { data: ruleRows, error: rulesError } = await supabase
+      .from('price_rules')
+      .select(
+        'id, zone_id, space_type, hourly_rate_cents, daily_cap_cents, currency, priority, archived_at',
+      )
+      .eq('facility_id', facilityId)
+      .order('priority', { ascending: false })
+
+    if (rulesError) {
+      setError(rulesError.message)
+      setLoading(false)
+      return
+    }
+
     const typedFacility = facilityRow as FacilityRow
     setFacility(typedFacility)
     setName(typedFacility.name)
@@ -129,6 +148,7 @@ function FacilityDetail() {
     setZones((zoneRows ?? []) as ZoneRow[])
     setSpaces(spaceRows)
     setHolds(holdRows)
+    setRules((ruleRows ?? []) as PriceRuleRow[])
     setLoading(false)
   }, [orgId, allowed, facilityId])
 
@@ -298,6 +318,15 @@ function FacilityDetail() {
         facilityId={facility.id}
         zones={zones}
         spaces={spaces}
+        reload={load}
+      />
+
+      <PricingSection
+        orgId={orgId!}
+        facilityId={facility.id}
+        zones={zones}
+        spaces={spaces}
+        rules={rules}
         reload={load}
       />
 

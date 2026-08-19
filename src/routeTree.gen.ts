@@ -15,6 +15,7 @@ import { Route as AppRouteImport } from './routes/app'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as SignupRouteImport } from './routes/signup'
 import { Route as AppIndexRouteImport } from './routes/app/index'
+import { Route as AppAvailabilityRouteImport } from './routes/app/availability'
 import { Route as AppOnboardingRouteImport } from './routes/app/onboarding'
 import { Route as AppSetupRouteImport } from './routes/app/setup'
 import { Route as AppStaffRouteImport } from './routes/app/staff'
@@ -51,6 +52,11 @@ const AppIndexRoute = AppIndexRouteImport.update({
   path: '/',
   getParentRoute: () => AppRoute,
 } as any)
+const AppAvailabilityRoute = AppAvailabilityRouteImport.update({
+  id: '/availability',
+  path: '/availability',
+  getParentRoute: () => AppRoute,
+} as any)
 const AppOnboardingRoute = AppOnboardingRouteImport.update({
   id: '/onboarding',
   path: '/onboarding',
@@ -83,6 +89,7 @@ export interface FileRoutesByFullPath {
   '/app': typeof AppRouteWithChildren
   '/login': typeof LoginRoute
   '/signup': typeof SignupRoute
+  '/app/availability': typeof AppAvailabilityRoute
   '/app/onboarding': typeof AppOnboardingRoute
   '/app/setup': typeof AppSetupRoute
   '/app/staff': typeof AppStaffRoute
@@ -95,6 +102,7 @@ export interface FileRoutesByTo {
   '/accept-invite': typeof AcceptInviteRoute
   '/login': typeof LoginRoute
   '/signup': typeof SignupRoute
+  '/app/availability': typeof AppAvailabilityRoute
   '/app/onboarding': typeof AppOnboardingRoute
   '/app/setup': typeof AppSetupRoute
   '/app/staff': typeof AppStaffRoute
@@ -109,6 +117,7 @@ export interface FileRoutesById {
   '/app': typeof AppRouteWithChildren
   '/login': typeof LoginRoute
   '/signup': typeof SignupRoute
+  '/app/availability': typeof AppAvailabilityRoute
   '/app/onboarding': typeof AppOnboardingRoute
   '/app/setup': typeof AppSetupRoute
   '/app/staff': typeof AppStaffRoute
@@ -124,6 +133,7 @@ export interface FileRouteTypes {
     | '/app'
     | '/login'
     | '/signup'
+    | '/app/availability'
     | '/app/onboarding'
     | '/app/setup'
     | '/app/staff'
@@ -136,6 +146,7 @@ export interface FileRouteTypes {
     | '/accept-invite'
     | '/login'
     | '/signup'
+    | '/app/availability'
     | '/app/onboarding'
     | '/app/setup'
     | '/app/staff'
@@ -149,6 +160,7 @@ export interface FileRouteTypes {
     | '/app'
     | '/login'
     | '/signup'
+    | '/app/availability'
     | '/app/onboarding'
     | '/app/setup'
     | '/app/staff'
@@ -209,6 +221,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppIndexRouteImport
       parentRoute: typeof AppRoute
     }
+    '/app/availability': {
+      id: '/app/availability'
+      path: '/availability'
+      fullPath: '/app/availability'
+      preLoaderRoute: typeof AppAvailabilityRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/app/onboarding': {
       id: '/app/onboarding'
       path: '/onboarding'
@@ -248,6 +267,7 @@ declare module '@tanstack/react-router' {
 }
 
 interface AppRouteChildren {
+  AppAvailabilityRoute: typeof AppAvailabilityRoute
   AppOnboardingRoute: typeof AppOnboardingRoute
   AppSetupRoute: typeof AppSetupRoute
   AppStaffRoute: typeof AppStaffRoute
@@ -257,6 +277,7 @@ interface AppRouteChildren {
 }
 
 const AppRouteChildren: AppRouteChildren = {
+  AppAvailabilityRoute: AppAvailabilityRoute,
   AppOnboardingRoute: AppOnboardingRoute,
   AppSetupRoute: AppSetupRoute,
   AppStaffRoute: AppStaffRoute,
