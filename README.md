@@ -1,32 +1,41 @@
-# React + TypeScript + Vite
+# ParkOS
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+Parking management SaaS. Vite + React 19 + TypeScript, Tailwind CSS v4, TanStack Router (file-based), Supabase.
 
-Currently, two official plugins are available:
+> [!IMPORTANT]
+> ## Database schema rule
+> **Schema changes only happen via migration files in `supabase/migrations/`, committed to git.**
+> Never edit the schema through the Supabase dashboard UI — the dashboard is for reading and debugging only.
+>
+> Workflow:
+> ```sh
+> npx supabase migration new <name>   # creates supabase/migrations/<timestamp>_<name>.sql
+> # write the SQL, then:
+> npx supabase db push                # applies pending migrations to the linked project
+> ```
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+## Environments
 
-## React Compiler
+One Supabase org (`ParkOS`) with two projects:
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+| Project     | URL                                        | Use                     |
+| ----------- | ------------------------------------------ | ----------------------- |
+| parkos-dev  | https://adxaihmccvewwnkunnkm.supabase.co   | development (linked)    |
+| parkos-prod | https://kzsjentyojrdhpzdnrfr.supabase.co   | production (not linked) |
 
-## Expanding the Oxlint configuration
+## Setup
 
-If you are developing a production application, we recommend enabling type-aware lint rules by installing `oxlint-tsgolint` and editing `.oxlintrc.json`:
-
-```json
-{
-  "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["react", "typescript", "oxc"],
-  "options": {
-    "typeAware": true
-  },
-  "rules": {
-    "react/rules-of-hooks": "error",
-    "react/only-export-components": ["warn", { "allowConstantExport": true }]
-  }
-}
+```sh
+npm install
+cp .env.example .env.local   # then fill in the parkos-dev URL and publishable key
+npm run dev
 ```
 
-See the [Oxlint rules documentation](https://oxc.rs/docs/guide/usage/linter/rules) for the full list of rules and categories.
+Secrets: `.env.local` is gitignored and holds only the publishable (anon) key. The secret (service-role) key and DB passwords must never appear in this repo.
+
+## Scripts
+
+- `npm run dev` — Vite dev server
+- `npm run build` — type-check + production build
+- `npm run lint` — ESLint
+- `npm run format` — Prettier
