@@ -1,4 +1,6 @@
--- DEV-ONLY seed for parkos-dev. Creates two isolated fake orgs so cross-org RLS
+-- DEV-ONLY manual seed for parkos-dev. Run with the Supabase CLI's file-query
+-- command; this file deliberately lives outside migrations and must never be pushed.
+-- Creates two isolated fake orgs so cross-org RLS
 -- isolation can be PROVEN (see supabase/tests/rls_isolation_checks.sql), not assumed.
 -- Do NOT apply this migration to a production project: it inserts fake auth.users.
 --

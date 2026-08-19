@@ -1,13 +1,12 @@
--- RLS isolation VERIFICATION migration (assertion-only; changes no schema, no data).
+-- DEV-ONLY manual RLS isolation verification (assertion-only; changes no schema or data).
 -- Companion to supabase/tests/rls_isolation_checks.sql (the interactive SQL-editor
--- version). This file exists so the checks run ON THE REMOTE as part of `db push`:
--- every block RAISES EXCEPTION on failure, which aborts the push with the message.
--- If this migration is recorded in schema_migrations, every check below PASSED there.
+-- version). Run this manually against parkos-dev after policy changes. Every block
+-- RAISES EXCEPTION on failure, so a failed check aborts execution with its message.
 --
 -- Depends on the dev seed (20260819040100); like the seed, dev-project only.
 
 -- ---------------------------------------------------------------------------
--- CHECK 0: the DDL actually landed — 8 RLS-enabled tables, 27 policies,
+-- CHECK 0: the DDL actually landed — 12 RLS-enabled tables, 32 policies,
 -- both helpers present and SECURITY DEFINER.
 -- ---------------------------------------------------------------------------
 do $$
@@ -16,14 +15,15 @@ begin
   select count(*) into v from pg_tables
    where schemaname = 'public' and rowsecurity
      and tablename in ('organizations','profiles','memberships','facilities',
-                       'zones','spaces','customers','vehicles');
-  if v <> 8 then
-    raise exception 'CHECK0 FAIL: expected 8 RLS-enabled tables, found %', v;
+                       'zones','spaces','customers','vehicles','reservations',
+                       'permits','price_rules','space_holds');
+  if v <> 12 then
+    raise exception 'CHECK0 FAIL: expected 12 RLS-enabled tables, found %', v;
   end if;
 
   select count(*) into v from pg_policies where schemaname = 'public';
-  if v <> 27 then
-    raise exception 'CHECK0 FAIL: expected 27 policies, found %', v;
+  if v <> 32 then
+    raise exception 'CHECK0 FAIL: expected 32 policies, found %', v;
   end if;
 
   select count(*) into v
@@ -34,7 +34,7 @@ begin
   if v <> 2 then
     raise exception 'CHECK0 FAIL: helper functions missing or not SECURITY DEFINER (found %)', v;
   end if;
-  raise notice 'CHECK0 PASS: 8 RLS tables, 27 policies, 2 SECURITY DEFINER helpers';
+  raise notice 'CHECK0 PASS: 12 RLS tables, 32 policies, 2 SECURITY DEFINER helpers';
 end $$;
 
 -- ---------------------------------------------------------------------------
@@ -49,7 +49,8 @@ declare
   t text; p text; missing text := '';
 begin
   foreach t in array array['organizations','profiles','memberships','facilities',
-                           'zones','spaces','customers','vehicles'] loop
+                           'zones','spaces','customers','vehicles','reservations',
+                           'permits','price_rules','space_holds'] loop
     foreach p in array array['SELECT','INSERT','UPDATE','DELETE'] loop
       if not has_table_privilege('authenticated', 'public.' || t, p) then
         missing := missing || t || ':' || p || ' ';
@@ -59,7 +60,7 @@ begin
   if missing <> '' then
     raise exception 'CHECK0b FAIL: authenticated is missing grants: %', missing;
   end if;
-  raise notice 'CHECK0b PASS: authenticated holds S/I/U/D on all 8 tables';
+  raise notice 'CHECK0b PASS: authenticated holds S/I/U/D on all 12 tables';
 end $$;
 
 -- ---------------------------------------------------------------------------
@@ -203,3 +204,17 @@ begin
 
   raise notice 'CHECK4 PASS: attendant blocked from facilities, allowed on customers';
 end $$;
+
+-- The Management API suppresses RAISE NOTICE output. If every assertion above
+-- completes, return an explicit, machine-visible summary for CI/manual evidence.
+select check_name, result
+from (values
+  ('CHECK0',  'PASS: 12 RLS tables, 32 policies, 2 SECURITY DEFINER helpers'),
+  ('CHECK0b', 'PASS: authenticated has S/I/U/D grants on all 12 RLS tables'),
+  ('CHECK1',  'PASS: Org A sees exactly 2 facilities / 165 spaces, all Org A'),
+  ('CHECK1b', 'PASS: Org B sees exactly 1 facility / 10 spaces, all Org B'),
+  ('CHECK2',  'PASS: cross-org insert rejected by RLS with SQLSTATE 42501'),
+  ('CHECK3',  'PASS: Org A sees 6 memberships with no policy recursion'),
+  ('CHECK4',  'PASS: attendant denied facility insert and allowed customer insert')
+) as checks(check_name, result)
+order by check_name;
