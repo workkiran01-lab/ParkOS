@@ -22,8 +22,9 @@ export default tseslint.config(
     },
   },
   {
-    // TanStack Router route files must export the Route object
-    files: ['src/routes/**/*.tsx'],
+    // TanStack Router route files must export the Route object;
+    // shadcn/ui components export variant helpers alongside the component
+    files: ['src/routes/**/*.tsx', 'src/components/ui/**/*.tsx'],
     rules: {
       'react-refresh/only-export-components': 'off',
     },
