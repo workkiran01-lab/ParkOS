@@ -6,8 +6,8 @@
 -- Depends on the dev seed (20260819040100); like the seed, dev-project only.
 
 -- ---------------------------------------------------------------------------
--- CHECK 0: the DDL actually landed — 12 RLS-enabled tables, 32 policies,
--- both helpers present and SECURITY DEFINER.
+-- CHECK 0: the DDL actually landed — 13 RLS-enabled tables, 36 policies,
+-- all five authorization/bootstrap functions present and SECURITY DEFINER.
 -- ---------------------------------------------------------------------------
 do $$
 declare v int;
@@ -16,25 +16,27 @@ begin
    where schemaname = 'public' and rowsecurity
      and tablename in ('organizations','profiles','memberships','facilities',
                        'zones','spaces','customers','vehicles','reservations',
-                       'permits','price_rules','space_holds');
-  if v <> 12 then
-    raise exception 'CHECK0 FAIL: expected 12 RLS-enabled tables, found %', v;
+                       'permits','price_rules','space_holds','invites');
+  if v <> 13 then
+    raise exception 'CHECK0 FAIL: expected 13 RLS-enabled tables, found %', v;
   end if;
 
   select count(*) into v from pg_policies where schemaname = 'public';
-  if v <> 32 then
-    raise exception 'CHECK0 FAIL: expected 32 policies, found %', v;
+  if v <> 36 then
+    raise exception 'CHECK0 FAIL: expected 36 policies, found %', v;
   end if;
 
   select count(*) into v
     from pg_proc p join pg_namespace n on n.oid = p.pronamespace
    where n.nspname = 'public'
-     and p.proname in ('get_user_role','has_any_role')
+     and p.proname in ('get_user_role','has_any_role',
+                       'create_organization_with_admin','accept_invite',
+                       'create_facility_with_zones_and_spaces')
      and p.prosecdef;
-  if v <> 2 then
+  if v <> 5 then
     raise exception 'CHECK0 FAIL: helper functions missing or not SECURITY DEFINER (found %)', v;
   end if;
-  raise notice 'CHECK0 PASS: 12 RLS tables, 32 policies, 2 SECURITY DEFINER helpers';
+  raise notice 'CHECK0 PASS: 13 RLS tables, 36 policies, 5 SECURITY DEFINER functions';
 end $$;
 
 -- ---------------------------------------------------------------------------
@@ -50,7 +52,7 @@ declare
 begin
   foreach t in array array['organizations','profiles','memberships','facilities',
                            'zones','spaces','customers','vehicles','reservations',
-                           'permits','price_rules','space_holds'] loop
+                           'permits','price_rules','space_holds','invites'] loop
     foreach p in array array['SELECT','INSERT','UPDATE','DELETE'] loop
       if not has_table_privilege('authenticated', 'public.' || t, p) then
         missing := missing || t || ':' || p || ' ';
@@ -60,7 +62,47 @@ begin
   if missing <> '' then
     raise exception 'CHECK0b FAIL: authenticated is missing grants: %', missing;
   end if;
-  raise notice 'CHECK0b PASS: authenticated holds S/I/U/D on all 12 tables';
+  raise notice 'CHECK0b PASS: authenticated holds S/I/U/D on all 13 tables';
+end $$;
+
+-- ---------------------------------------------------------------------------
+-- CHECK 5: invite RLS. Org A admin can manage invites; Org A manager cannot.
+-- ---------------------------------------------------------------------------
+do $$
+declare v_role text := current_user;
+begin
+  delete from public.invites where email = '__rls_invite_check__@parkos.dev';
+
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000a1","role":"authenticated"}', true);
+  perform set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-0000000000a1', true);
+  execute 'set local role authenticated';
+
+  insert into public.invites (org_id, email, role, invited_by)
+  values ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '__rls_invite_check__@parkos.dev',
+          'attendant', '00000000-0000-0000-0000-0000000000a1');
+
+  execute format('set local role %I', v_role);
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000a2","role":"authenticated"}', true);
+  perform set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-0000000000a2', true);
+  execute 'set local role authenticated';
+
+  begin
+    insert into public.invites (org_id, email, role, invited_by)
+    values ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'manager-denied@parkos.dev',
+            'attendant', '00000000-0000-0000-0000-0000000000a2');
+    raise exception 'CHECK5 FAIL: manager created an invite';
+  exception
+    when sqlstate '42501' then
+      if sqlerrm not like '%row-level security%' then
+        raise exception 'CHECK5 FAIL: manager denied by GRANTs, not RLS: %', sqlerrm;
+      end if;
+  end;
+
+  execute format('set local role %I', v_role);
+  delete from public.invites where email = '__rls_invite_check__@parkos.dev';
+  raise notice 'CHECK5 PASS: admin created invite; manager rejected by RLS';
 end $$;
 
 -- ---------------------------------------------------------------------------
@@ -205,16 +247,91 @@ begin
   raise notice 'CHECK4 PASS: attendant blocked from facilities, allowed on customers';
 end $$;
 
+-- ---------------------------------------------------------------------------
+-- CHECK 6: create_facility_with_zones_and_spaces RPC. An Org A ATTENDANT must
+-- be rejected with ROLE_NOT_ALLOWED before any row is written; an Org A ADMIN
+-- must succeed and produce exactly the facility/zones/spaces requested, all
+-- carrying Org A's org_id. Created rows are deleted afterwards as postgres so
+-- the script stays data-neutral.
+-- ---------------------------------------------------------------------------
+do $$
+declare
+  v int;
+  v_role text := current_user;
+  v_facility_id uuid;
+  v_payload jsonb := '[
+    {"zone_name": "RLS Check Zone 1", "level": 1,
+     "space_batches": [{"prefix": "T1-", "starting_number": 1, "count": 2, "space_type": "standard"}]},
+    {"zone_name": "RLS Check Zone 2", "level": 2,
+     "space_batches": [{"prefix": "T2-", "starting_number": 5, "count": 3, "space_type": "ev"}]}
+  ]'::jsonb;
+begin
+  -- attendant (a3): must be refused with the function's own role check
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000a3","role":"authenticated"}', true);
+  perform set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-0000000000a3', true);
+  execute 'set local role authenticated';
+
+  begin
+    perform public.create_facility_with_zones_and_spaces(
+      '__RLS_CHECK_FACILITY__', null, 'America/Los_Angeles', null, v_payload);
+    raise exception 'CHECK6 FAIL: attendant created a facility via RPC';
+  exception
+    when sqlstate 'P0001' then
+      if sqlerrm <> 'ROLE_NOT_ALLOWED' then
+        raise exception 'CHECK6 FAIL: attendant rejected with "%" not ROLE_NOT_ALLOWED', sqlerrm;
+      end if;
+  end;
+
+  -- admin (a1): must succeed atomically
+  execute format('set local role %I', v_role);
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000a1","role":"authenticated"}', true);
+  perform set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-0000000000a1', true);
+  execute 'set local role authenticated';
+
+  v_facility_id := public.create_facility_with_zones_and_spaces(
+    '__RLS_CHECK_FACILITY__', '1 Test Way', 'America/Los_Angeles',
+    '{"type":"daily","open":"06:00","close":"22:00"}'::jsonb, v_payload);
+
+  execute format('set local role %I', v_role);
+
+  select count(*) into v from public.zones
+   where facility_id = v_facility_id
+     and org_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+  if v <> 2 then raise exception 'CHECK6 FAIL: expected 2 Org A zones, found %', v; end if;
+
+  select count(*) into v from public.spaces
+   where zone_id in (select id from public.zones where facility_id = v_facility_id)
+     and org_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+  if v <> 5 then raise exception 'CHECK6 FAIL: expected 5 Org A spaces, found %', v; end if;
+
+  select count(*) into v from public.spaces
+   where zone_id in (select id from public.zones where facility_id = v_facility_id)
+     and space_number in ('T1-001', 'T1-002', 'T2-005', 'T2-006', 'T2-007');
+  if v <> 5 then raise exception 'CHECK6 FAIL: space numbering wrong (matched % of 5)', v; end if;
+
+  -- cleanup as postgres; child rows first (no cascade on the composite FKs)
+  delete from public.spaces
+   where zone_id in (select id from public.zones where facility_id = v_facility_id);
+  delete from public.zones where facility_id = v_facility_id;
+  delete from public.facilities where id = v_facility_id;
+
+  raise notice 'CHECK6 PASS: facility RPC denies attendant, admin bootstrap atomic and org-scoped';
+end $$;
+
 -- The Management API suppresses RAISE NOTICE output. If every assertion above
 -- completes, return an explicit, machine-visible summary for CI/manual evidence.
 select check_name, result
 from (values
-  ('CHECK0',  'PASS: 12 RLS tables, 32 policies, 2 SECURITY DEFINER helpers'),
-  ('CHECK0b', 'PASS: authenticated has S/I/U/D grants on all 12 RLS tables'),
+  ('CHECK0',  'PASS: 13 RLS tables, 36 policies, 5 SECURITY DEFINER functions'),
+  ('CHECK0b', 'PASS: authenticated has S/I/U/D grants on all 13 RLS tables'),
   ('CHECK1',  'PASS: Org A sees exactly 2 facilities / 165 spaces, all Org A'),
   ('CHECK1b', 'PASS: Org B sees exactly 1 facility / 10 spaces, all Org B'),
   ('CHECK2',  'PASS: cross-org insert rejected by RLS with SQLSTATE 42501'),
   ('CHECK3',  'PASS: Org A sees 6 memberships with no policy recursion'),
-  ('CHECK4',  'PASS: attendant denied facility insert and allowed customer insert')
+  ('CHECK4',  'PASS: attendant denied facility insert and allowed customer insert'),
+  ('CHECK5',  'PASS: admin created invite; manager rejected by RLS'),
+  ('CHECK6',  'PASS: facility RPC denies attendant; admin bootstrap atomic and org-scoped')
 ) as checks(check_name, result)
 order by check_name;

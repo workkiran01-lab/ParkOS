@@ -4,6 +4,7 @@ import { RouterProvider, createRouter } from '@tanstack/react-router'
 import { routeTree } from './routeTree.gen'
 import { ErrorFallback } from '@/components/ui/ErrorFallback'
 import { PageSpinner } from '@/components/ui/Spinner'
+import { AuthProvider } from '@/hooks/useAuth'
 import './index.css'
 
 const router = createRouter({
@@ -20,6 +21,8 @@ declare module '@tanstack/react-router' {
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <RouterProvider router={router} />
+    <AuthProvider>
+      <RouterProvider router={router} />
+    </AuthProvider>
   </StrictMode>,
 )

@@ -17,10 +17,10 @@ function Home() {
           Log in
         </Link>
         <Link
-          to="/app"
+          to="/signup"
           className="rounded-md border border-gray-300 px-4 py-2 text-sm font-medium hover:bg-gray-100"
         >
-          Open app
+          Create account
         </Link>
       </div>
     </main>
