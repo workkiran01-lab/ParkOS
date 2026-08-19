@@ -22,10 +22,11 @@ begin
   end if;
 
   -- 36 through Week 4, +1 in Week 5 (space_holds_update for release-early),
-  -- +1 in Week 6 (price_rules_update for rule editing/archival).
+  -- +1 in Week 6 (price_rules_update), +9 in Week 7 (customer self-service:
+  -- customers x3, vehicles x3, reservations x2, space_holds insert x1).
   select count(*) into v from pg_policies where schemaname = 'public';
-  if v <> 38 then
-    raise exception 'CHECK0 FAIL: expected 38 policies, found %', v;
+  if v <> 47 then
+    raise exception 'CHECK0 FAIL: expected 47 policies, found %', v;
   end if;
 
   select count(*) into v
@@ -33,12 +34,24 @@ begin
    where n.nspname = 'public'
      and p.proname in ('get_user_role','has_any_role',
                        'create_organization_with_admin','accept_invite',
-                       'create_facility_with_zones_and_spaces')
+                       'create_facility_with_zones_and_spaces',
+                       'get_public_facility','get_public_availability',
+                       'public_quote_reservation','public_ensure_customer',
+                       'public_create_reservation')
      and p.prosecdef;
-  if v <> 5 then
+  if v <> 10 then
     raise exception 'CHECK0 FAIL: helper functions missing or not SECURITY DEFINER (found %)', v;
   end if;
-  raise notice 'CHECK0 PASS: 13 RLS tables, 38 policies, 5 SECURITY DEFINER functions';
+
+  -- is_own_customer must stay SECURITY INVOKER: it is safe from recursion only
+  -- because it is never called from a policy on customers itself.
+  select count(*) into v
+    from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+   where n.nspname = 'public' and p.proname = 'is_own_customer' and not p.prosecdef;
+  if v <> 1 then
+    raise exception 'CHECK0 FAIL: is_own_customer missing or wrongly SECURITY DEFINER';
+  end if;
+  raise notice 'CHECK0 PASS: 13 RLS tables, 47 policies, 10 SECURITY DEFINER functions';
 end $$;
 
 -- ---------------------------------------------------------------------------
@@ -322,11 +335,166 @@ begin
   raise notice 'CHECK6 PASS: facility RPC denies attendant, admin bootstrap atomic and org-scoped';
 end $$;
 
+-- ---------------------------------------------------------------------------
+-- CHECK 7: customer isolation. Two synthetic customer logins (no memberships)
+-- both linked to Org A. Proves: (a) customer 2 cannot see customer 1's
+-- reservations; (b) customer 2 cannot book with customer 1's customer_id via
+-- public_create_reservation (clear exception, not a wrong-owner insert);
+-- (c) get_public_availability with an arbitrary (Org B) facility id surfaces
+-- ONLY that facility's own spaces — no cross-tenant rows. All synthetic rows
+-- (auth users, customers, price rule, reservation, hold) are deleted at the
+-- end as postgres, so the script stays data-neutral.
+-- ---------------------------------------------------------------------------
+do $$
+declare
+  v int;
+  v_role text := current_user;
+  c_user1 uuid := '00000000-0000-0000-0000-0000000000c1';
+  c_user2 uuid := '00000000-0000-0000-0000-0000000000c2';
+  v_customer1 uuid;
+  v_customer2 uuid;
+  v_facility_a uuid;
+  v_facility_b uuid;
+  v_space uuid;
+  v_rule uuid;
+  v_reservation uuid;
+  v_b_space_ids uuid[];
+  v_start timestamptz := date_trunc('hour', now()) + interval '200 days';
+begin
+  -- setup as postgres
+  insert into auth.users
+    (instance_id, id, aud, role, email, encrypted_password,
+     email_confirmed_at, created_at, updated_at, raw_app_meta_data, raw_user_meta_data)
+  values
+    ('00000000-0000-0000-0000-000000000000', c_user1, 'authenticated', 'authenticated',
+     'rls-check-c1@parkos.dev', 'x', now(), now(), now(), '{}', '{}'),
+    ('00000000-0000-0000-0000-000000000000', c_user2, 'authenticated', 'authenticated',
+     'rls-check-c2@parkos.dev', 'x', now(), now(), now(), '{}', '{}')
+  on conflict (id) do nothing;
+
+  insert into public.customers (org_id, user_id, full_name)
+  values ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', c_user1, '__RLS_CHECK_C1__')
+  returning id into v_customer1;
+  insert into public.customers (org_id, user_id, full_name)
+  values ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', c_user2, '__RLS_CHECK_C2__')
+  returning id into v_customer2;
+
+  select f.id into v_facility_a from public.facilities f
+   where f.org_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+     and f.archived_at is null
+   order by f.name limit 1;
+  select f.id into v_facility_b from public.facilities f
+   where f.org_id = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb'
+     and f.archived_at is null
+   order by f.name limit 1;
+
+  -- a space in facility A with no unreleased holds at all
+  select s.id into v_space
+    from public.spaces s
+    join public.zones z on z.id = s.zone_id
+   where z.facility_id = v_facility_a
+     and s.archived_at is null and z.archived_at is null
+     and not exists (
+       select 1 from public.space_holds h
+        where h.space_id = s.id and h.released_at is null)
+   order by s.space_number limit 1;
+  if v_space is null then
+    raise exception 'CHECK7 FAIL: no hold-free space in facility A to test with';
+  end if;
+
+  -- low-priority facility-wide rule so quoting always finds something
+  insert into public.price_rules (org_id, facility_id, hourly_rate_cents, priority)
+  values ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', v_facility_a, 100, -1000)
+  returning id into v_rule;
+
+  -- Reference set for the leak check, captured NOW as postgres: once we
+  -- impersonate customer 2, RLS hides public.spaces entirely, so a subquery
+  -- against it at that point would be empty and falsely flag every row.
+  select array_agg(s.id) into v_b_space_ids
+    from public.spaces s
+    join public.zones z on z.id = s.zone_id
+   where z.facility_id = v_facility_b;
+
+  -- (positive control) customer 1 books through the public wrapper
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000c1","role":"authenticated"}', true);
+  perform set_config('request.jwt.claim.sub', c_user1::text, true);
+  execute 'set local role authenticated';
+
+  select r.reservation_id into v_reservation
+    from public.public_create_reservation(
+      v_facility_a, v_space, v_customer1, null,
+      v_start, v_start + interval '2 hours') r;
+
+  select count(*) into v from public.reservations;
+  if v <> 1 then
+    raise exception 'CHECK7 FAIL: customer 1 sees % reservations, expected exactly their 1', v;
+  end if;
+
+  -- switch to customer 2
+  execute format('set local role %I', v_role);
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000c2","role":"authenticated"}', true);
+  perform set_config('request.jwt.claim.sub', c_user2::text, true);
+  execute 'set local role authenticated';
+
+  -- (a) cannot see customer 1's reservations
+  select count(*) into v from public.reservations;
+  if v <> 0 then
+    raise exception 'CHECK7 FAIL: customer 2 sees % foreign reservations — LEAK', v;
+  end if;
+
+  -- (a') and sees only their own customers row
+  select count(*) into v from public.customers;
+  if v <> 1 then
+    raise exception 'CHECK7 FAIL: customer 2 sees % customer rows, expected 1 (own)', v;
+  end if;
+
+  -- (b) cannot book with customer 1's customer_id
+  begin
+    perform public.public_create_reservation(
+      v_facility_a, v_space, v_customer1, null,
+      v_start + interval '10 hours', v_start + interval '12 hours');
+    raise exception 'CHECK7 FAIL: customer 2 booked with customer 1''s identity';
+  exception
+    when sqlstate 'P0001' then
+      if sqlerrm <> 'CUSTOMER_NOT_OWNED' then
+        raise exception 'CHECK7 FAIL: wrong rejection "%" (expected CUSTOMER_NOT_OWNED)', sqlerrm;
+      end if;
+  end;
+
+  -- (c) availability for Org B's facility surfaces only that facility's spaces
+  select count(*) into v
+    from public.get_public_availability(
+      v_facility_b, v_start, v_start + interval '2 hours') a
+   where a.space_id <> all (v_b_space_ids);
+  if v <> 0 then
+    raise exception 'CHECK7 FAIL: get_public_availability leaked % cross-tenant spaces', v;
+  end if;
+
+  select count(*) into v
+    from public.get_public_availability(
+      v_facility_b, v_start, v_start + interval '2 hours') a;
+  if v = 0 then
+    raise exception 'CHECK7 FAIL: availability for facility B returned nothing (degenerate)';
+  end if;
+
+  -- cleanup as postgres; children first
+  execute format('set local role %I', v_role);
+  delete from public.space_holds where reservation_id = v_reservation;
+  delete from public.reservations where id = v_reservation;
+  delete from public.price_rules where id = v_rule;
+  delete from public.customers where id in (v_customer1, v_customer2);
+  delete from auth.users where id in (c_user1, c_user2);
+
+  raise notice 'CHECK7 PASS: customer rows isolated; identity spoof rejected; availability tenant-clean';
+end $$;
+
 -- The Management API suppresses RAISE NOTICE output. If every assertion above
 -- completes, return an explicit, machine-visible summary for CI/manual evidence.
 select check_name, result
 from (values
-  ('CHECK0',  'PASS: 13 RLS tables, 38 policies, 5 SECURITY DEFINER functions'),
+  ('CHECK0',  'PASS: 13 RLS tables, 47 policies, 10 SECURITY DEFINER functions'),
   ('CHECK0b', 'PASS: authenticated has S/I/U/D grants on all 13 RLS tables'),
   ('CHECK1',  'PASS: Org A sees exactly 2 facilities / 165 spaces, all Org A'),
   ('CHECK1b', 'PASS: Org B sees exactly 1 facility / 10 spaces, all Org B'),
@@ -334,6 +502,7 @@ from (values
   ('CHECK3',  'PASS: Org A sees 6 memberships with no policy recursion'),
   ('CHECK4',  'PASS: attendant denied facility insert and allowed customer insert'),
   ('CHECK5',  'PASS: admin created invite; manager rejected by RLS'),
-  ('CHECK6',  'PASS: facility RPC denies attendant; admin bootstrap atomic and org-scoped')
+  ('CHECK6',  'PASS: facility RPC denies attendant; admin bootstrap atomic and org-scoped'),
+  ('CHECK7',  'PASS: customer rows isolated; identity spoof rejected; availability tenant-clean')
 ) as checks(check_name, result)
 order by check_name;
