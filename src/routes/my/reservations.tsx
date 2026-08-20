@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
-import { createFileRoute } from '@tanstack/react-router'
+import { createFileRoute, Link } from '@tanstack/react-router'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
@@ -141,13 +141,18 @@ function MyReservations() {
   return (
     <div className="min-h-screen bg-muted/30 px-4 py-10">
       <div className="mx-auto max-w-3xl space-y-6">
-        <div>
-          <h1 className="text-3xl font-semibold tracking-tight">
-            My reservations
-          </h1>
-          <p className="mt-1 text-muted-foreground">
-            Every booking on this account, across all parking operators.
-          </p>
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <h1 className="text-3xl font-semibold tracking-tight">
+              My reservations
+            </h1>
+            <p className="mt-1 text-muted-foreground">
+              Every booking on this account, across all parking operators.
+            </p>
+          </div>
+          <Button variant="ghost" onClick={() => supabase.auth.signOut()}>
+            Sign out
+          </Button>
         </div>
         {error && <p className="text-sm text-destructive">{error}</p>}
         <Card>
@@ -166,6 +171,7 @@ function MyReservations() {
                     <TableHead>When</TableHead>
                     <TableHead>Status</TableHead>
                     <TableHead className="text-right">Total</TableHead>
+                    <TableHead className="w-28" />
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -191,6 +197,16 @@ function MyReservations() {
                       </TableCell>
                       <TableCell className="text-right">
                         {dollars(row.total_cents)} {row.currency}
+                      </TableCell>
+                      <TableCell>
+                        <Button size="sm" variant="outline" asChild>
+                          <Link
+                            to="/book/$facilityId"
+                            params={{ facilityId: row.facility_id }}
+                          >
+                            Book again
+                          </Link>
+                        </Button>
                       </TableCell>
                     </TableRow>
                   ))}
