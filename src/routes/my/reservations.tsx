@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import { createFileRoute, Link } from '@tanstack/react-router'
+import { ReservationActions } from '@/components/reservations/ReservationActions'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
@@ -21,13 +22,17 @@ import {
 } from '@/components/ui/table'
 import { useAuth } from '@/hooks/useAuth'
 import { dollars } from '@/lib/format'
-import { formatRange } from '@/lib/holds'
+import { formatRange, parseTstzrange } from '@/lib/holds'
 import { supabase } from '@/lib/supabase'
 import { AuthPage, Field } from '@/routes/login'
 
 type ReservationRow = {
-  id: string
+  reservation_id: string
   facility_id: string
+  facility_name: string
+  space_id: string
+  space_number: string
+  zone_name: string
   during: string
   status: string
   total_cents: number
@@ -42,9 +47,6 @@ export const Route = createFileRoute('/my/reservations')({
 function MyReservations() {
   const { user, loading: authLoading } = useAuth()
   const [rows, setRows] = useState<ReservationRow[] | null>(null)
-  const [facilityNames, setFacilityNames] = useState<Map<string, string>>(
-    new Map(),
-  )
   const [error, setError] = useState<string | null>(null)
 
   // inline login (customers never go through the staff /login route)
@@ -54,31 +56,14 @@ function MyReservations() {
   const [authBusy, setAuthBusy] = useState(false)
 
   const load = useCallback(async () => {
-    // No org filter on purpose: RLS returns exactly the caller's own rows,
-    // across every operator they've booked with.
-    const { data, error: loadError } = await supabase
-      .from('reservations')
-      .select('id, facility_id, during, status, total_cents, currency, created_at')
-      .order('created_at', { ascending: false })
+    // One elevated call returns the caller's own reservations across every
+    // operator, with space/facility labels their reservation RLS can't join to.
+    const { data, error: loadError } = await supabase.rpc('get_my_reservations')
     if (loadError) {
       setError(loadError.message)
       return
     }
-    const reservations = (data ?? []) as ReservationRow[]
-    setRows(reservations)
-
-    const names = new Map<string, string>()
-    const facilityIds = [...new Set(reservations.map((row) => row.facility_id))]
-    await Promise.all(
-      facilityIds.map(async (id) => {
-        const { data: facility } = await supabase.rpc('get_public_facility', {
-          p_facility_id: id,
-        })
-        const row = ((facility as { name: string }[]) ?? [])[0]
-        if (row) names.set(id, row.name)
-      }),
-    )
-    setFacilityNames(names)
+    setRows((data ?? []) as ReservationRow[])
   }, [])
 
   useEffect(() => {
@@ -168,48 +153,74 @@ function MyReservations() {
                 <TableHeader>
                   <TableRow>
                     <TableHead>Facility</TableHead>
+                    <TableHead>Space</TableHead>
                     <TableHead>When</TableHead>
                     <TableHead>Status</TableHead>
                     <TableHead className="text-right">Total</TableHead>
-                    <TableHead className="w-28" />
+                    <TableHead>Manage</TableHead>
+                    <TableHead className="w-24" />
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {rows.map((row) => (
-                    <TableRow key={row.id}>
-                      <TableCell className="font-medium">
-                        {facilityNames.get(row.facility_id) ?? 'Facility'}
-                        <p className="font-mono text-xs text-muted-foreground">
-                          {row.id.slice(0, 8)}
-                        </p>
-                      </TableCell>
-                      <TableCell className="text-muted-foreground">
-                        {formatRange(row.during)}
-                      </TableCell>
-                      <TableCell>
-                        <Badge
-                          variant={
-                            row.status === 'cancelled' ? 'outline' : 'default'
-                          }
-                        >
-                          {row.status}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="text-right">
-                        {dollars(row.total_cents)} {row.currency}
-                      </TableCell>
-                      <TableCell>
-                        <Button size="sm" variant="outline" asChild>
-                          <Link
-                            to="/book/$facilityId"
-                            params={{ facilityId: row.facility_id }}
+                  {rows.map((row) => {
+                    const { start, end } = parseTstzrange(row.during)
+                    return (
+                      <TableRow key={row.reservation_id}>
+                        <TableCell className="font-medium">
+                          {row.facility_name}
+                          <p className="font-mono text-xs text-muted-foreground">
+                            {row.reservation_id.slice(0, 8)}
+                          </p>
+                        </TableCell>
+                        <TableCell>
+                          {row.space_number}
+                          <p className="text-xs text-muted-foreground">
+                            {row.zone_name}
+                          </p>
+                        </TableCell>
+                        <TableCell className="text-muted-foreground">
+                          {formatRange(row.during)}
+                        </TableCell>
+                        <TableCell>
+                          <Badge
+                            variant={
+                              row.status === 'cancelled' || row.status === 'no_show'
+                                ? 'outline'
+                                : 'default'
+                            }
                           >
-                            Book again
-                          </Link>
-                        </Button>
-                      </TableCell>
-                    </TableRow>
-                  ))}
+                            {row.status}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="text-right">
+                          {dollars(row.total_cents)} {row.currency}
+                        </TableCell>
+                        <TableCell>
+                          {start && end && (
+                            <ReservationActions
+                              reservationId={row.reservation_id}
+                              status={row.status}
+                              spaceId={row.space_id}
+                              startIso={start.toISOString()}
+                              endIso={end.toISOString()}
+                              isStaff={false}
+                              onDone={load}
+                            />
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          <Button size="sm" variant="outline" asChild>
+                            <Link
+                              to="/book/$facilityId"
+                              params={{ facilityId: row.facility_id }}
+                            >
+                              Book again
+                            </Link>
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    )
+                  })}
                 </TableBody>
               </Table>
             )}

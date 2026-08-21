@@ -17,6 +17,8 @@ import { Route as SignupRouteImport } from './routes/signup'
 import { Route as AppIndexRouteImport } from './routes/app/index'
 import { Route as AppAvailabilityRouteImport } from './routes/app/availability'
 import { Route as AppOnboardingRouteImport } from './routes/app/onboarding'
+import { Route as AppOverrideRouteImport } from './routes/app/override'
+import { Route as AppReservationsRouteImport } from './routes/app/reservations'
 import { Route as AppSetupRouteImport } from './routes/app/setup'
 import { Route as AppStaffRouteImport } from './routes/app/staff'
 import { Route as BookFacilityIdRouteImport } from './routes/book/$facilityId'
@@ -64,6 +66,16 @@ const AppOnboardingRoute = AppOnboardingRouteImport.update({
   path: '/onboarding',
   getParentRoute: () => AppRoute,
 } as any)
+const AppOverrideRoute = AppOverrideRouteImport.update({
+  id: '/override',
+  path: '/override',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppReservationsRoute = AppReservationsRouteImport.update({
+  id: '/reservations',
+  path: '/reservations',
+  getParentRoute: () => AppRoute,
+} as any)
 const AppSetupRoute = AppSetupRouteImport.update({
   id: '/setup',
   path: '/setup',
@@ -103,6 +115,8 @@ export interface FileRoutesByFullPath {
   '/signup': typeof SignupRoute
   '/app/availability': typeof AppAvailabilityRoute
   '/app/onboarding': typeof AppOnboardingRoute
+  '/app/override': typeof AppOverrideRoute
+  '/app/reservations': typeof AppReservationsRoute
   '/app/setup': typeof AppSetupRoute
   '/app/staff': typeof AppStaffRoute
   '/book/$facilityId': typeof BookFacilityIdRoute
@@ -118,6 +132,8 @@ export interface FileRoutesByTo {
   '/signup': typeof SignupRoute
   '/app/availability': typeof AppAvailabilityRoute
   '/app/onboarding': typeof AppOnboardingRoute
+  '/app/override': typeof AppOverrideRoute
+  '/app/reservations': typeof AppReservationsRoute
   '/app/setup': typeof AppSetupRoute
   '/app/staff': typeof AppStaffRoute
   '/book/$facilityId': typeof BookFacilityIdRoute
@@ -135,6 +151,8 @@ export interface FileRoutesById {
   '/signup': typeof SignupRoute
   '/app/availability': typeof AppAvailabilityRoute
   '/app/onboarding': typeof AppOnboardingRoute
+  '/app/override': typeof AppOverrideRoute
+  '/app/reservations': typeof AppReservationsRoute
   '/app/setup': typeof AppSetupRoute
   '/app/staff': typeof AppStaffRoute
   '/book/$facilityId': typeof BookFacilityIdRoute
@@ -153,6 +171,8 @@ export interface FileRouteTypes {
     | '/signup'
     | '/app/availability'
     | '/app/onboarding'
+    | '/app/override'
+    | '/app/reservations'
     | '/app/setup'
     | '/app/staff'
     | '/book/$facilityId'
@@ -168,6 +188,8 @@ export interface FileRouteTypes {
     | '/signup'
     | '/app/availability'
     | '/app/onboarding'
+    | '/app/override'
+    | '/app/reservations'
     | '/app/setup'
     | '/app/staff'
     | '/book/$facilityId'
@@ -184,6 +206,8 @@ export interface FileRouteTypes {
     | '/signup'
     | '/app/availability'
     | '/app/onboarding'
+    | '/app/override'
+    | '/app/reservations'
     | '/app/setup'
     | '/app/staff'
     | '/book/$facilityId'
@@ -261,6 +285,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppOnboardingRouteImport
       parentRoute: typeof AppRoute
     }
+    '/app/override': {
+      id: '/app/override'
+      path: '/override'
+      fullPath: '/app/override'
+      preLoaderRoute: typeof AppOverrideRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/app/reservations': {
+      id: '/app/reservations'
+      path: '/reservations'
+      fullPath: '/app/reservations'
+      preLoaderRoute: typeof AppReservationsRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/app/setup': {
       id: '/app/setup'
       path: '/setup'
@@ -309,6 +347,8 @@ declare module '@tanstack/react-router' {
 interface AppRouteChildren {
   AppAvailabilityRoute: typeof AppAvailabilityRoute
   AppOnboardingRoute: typeof AppOnboardingRoute
+  AppOverrideRoute: typeof AppOverrideRoute
+  AppReservationsRoute: typeof AppReservationsRoute
   AppSetupRoute: typeof AppSetupRoute
   AppStaffRoute: typeof AppStaffRoute
   AppIndexRoute: typeof AppIndexRoute
@@ -319,6 +359,8 @@ interface AppRouteChildren {
 const AppRouteChildren: AppRouteChildren = {
   AppAvailabilityRoute: AppAvailabilityRoute,
   AppOnboardingRoute: AppOnboardingRoute,
+  AppOverrideRoute: AppOverrideRoute,
+  AppReservationsRoute: AppReservationsRoute,
   AppSetupRoute: AppSetupRoute,
   AppStaffRoute: AppStaffRoute,
   AppIndexRoute: AppIndexRoute,

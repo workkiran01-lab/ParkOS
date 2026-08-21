@@ -28,7 +28,19 @@ export const Route = createFileRoute('/app')({
       .maybeSingle()
 
     const onSetup = location.pathname.startsWith('/app/setup')
-    if (!error && !profile && !onSetup) throw redirect({ to: '/app/setup' })
+    if (!error && !profile && !onSetup) {
+      // A profile-less session is either a staff user whose org creation
+      // failed, or a customer who only ever booked (customers row, no
+      // membership). Send customers to their bookings instead of offering
+      // org creation, which is the staff-only recovery path.
+      const { data: customer } = await supabase
+        .from('customers')
+        .select('id')
+        .eq('user_id', session.user.id)
+        .limit(1)
+        .maybeSingle()
+      throw redirect({ to: customer ? '/my/reservations' : '/app/setup' })
+    }
     if (profile && onSetup) throw redirect({ to: '/app' })
   },
   component: AppLayout,
@@ -55,14 +67,24 @@ function AppLayout() {
               <NavLink to="/app/onboarding">Onboarding</NavLink>
             </li>
             {(role === 'admin' || role === 'manager' || role === 'attendant') && (
-              <li>
-                <NavLink to="/app/availability">Availability</NavLink>
-              </li>
+              <>
+                <li>
+                  <NavLink to="/app/availability">Availability</NavLink>
+                </li>
+                <li>
+                  <NavLink to="/app/reservations">Reservations</NavLink>
+                </li>
+              </>
             )}
             {(role === 'admin' || role === 'manager') && (
-              <li>
-                <NavLink to="/app/facilities">Facilities</NavLink>
-              </li>
+              <>
+                <li>
+                  <NavLink to="/app/facilities">Facilities</NavLink>
+                </li>
+                <li>
+                  <NavLink to="/app/override">Override</NavLink>
+                </li>
+              </>
             )}
             {role === 'admin' && (
               <li>
@@ -96,6 +118,8 @@ function NavLink({
     | '/app/staff'
     | '/app/facilities'
     | '/app/availability'
+    | '/app/reservations'
+    | '/app/override'
   children: string
 }) {
   return (

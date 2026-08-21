@@ -6,8 +6,8 @@
 -- Depends on the dev seed (20260819040100); like the seed, dev-project only.
 
 -- ---------------------------------------------------------------------------
--- CHECK 0: the DDL actually landed — 13 RLS-enabled tables, 36 policies,
--- all five authorization/bootstrap functions present and SECURITY DEFINER.
+-- CHECK 0: the DDL actually landed — 14 RLS-enabled tables, 48 policies,
+-- all authorization/bootstrap/lifecycle functions present and SECURITY DEFINER.
 -- ---------------------------------------------------------------------------
 do $$
 declare v int;
@@ -16,17 +16,18 @@ begin
    where schemaname = 'public' and rowsecurity
      and tablename in ('organizations','profiles','memberships','facilities',
                        'zones','spaces','customers','vehicles','reservations',
-                       'permits','price_rules','space_holds','invites');
-  if v <> 13 then
-    raise exception 'CHECK0 FAIL: expected 13 RLS-enabled tables, found %', v;
+                       'permits','price_rules','space_holds','invites','audit_log');
+  if v <> 14 then
+    raise exception 'CHECK0 FAIL: expected 14 RLS-enabled tables, found %', v;
   end if;
 
   -- 36 through Week 4, +1 in Week 5 (space_holds_update for release-early),
   -- +1 in Week 6 (price_rules_update), +9 in Week 7 (customer self-service:
-  -- customers x3, vehicles x3, reservations x2, space_holds insert x1).
+  -- customers x3, vehicles x3, reservations x2, space_holds insert x1),
+  -- +1 in Week 8 (audit_log_select).
   select count(*) into v from pg_policies where schemaname = 'public';
-  if v <> 47 then
-    raise exception 'CHECK0 FAIL: expected 47 policies, found %', v;
+  if v <> 48 then
+    raise exception 'CHECK0 FAIL: expected 48 policies, found %', v;
   end if;
 
   select count(*) into v
@@ -37,9 +38,11 @@ begin
                        'create_facility_with_zones_and_spaces',
                        'get_public_facility','get_public_availability',
                        'public_quote_reservation','public_ensure_customer',
-                       'public_create_reservation')
+                       'public_create_reservation',
+                       'cancel_reservation','extend_reservation',
+                       'confirm_reservation','mark_no_shows','get_my_reservations')
      and p.prosecdef;
-  if v <> 10 then
+  if v <> 15 then
     raise exception 'CHECK0 FAIL: helper functions missing or not SECURITY DEFINER (found %)', v;
   end if;
 
@@ -51,7 +54,7 @@ begin
   if v <> 1 then
     raise exception 'CHECK0 FAIL: is_own_customer missing or wrongly SECURITY DEFINER';
   end if;
-  raise notice 'CHECK0 PASS: 13 RLS tables, 47 policies, 10 SECURITY DEFINER functions';
+  raise notice 'CHECK0 PASS: 14 RLS tables, 48 policies, 15 SECURITY DEFINER functions';
 end $$;
 
 -- ---------------------------------------------------------------------------
@@ -490,11 +493,152 @@ begin
   raise notice 'CHECK7 PASS: customer rows isolated; identity spoof rejected; availability tenant-clean';
 end $$;
 
+-- ---------------------------------------------------------------------------
+-- CHECK 8: reservation lifecycle authorization. Proves: (a) a customer cannot
+-- cancel OR extend another customer's reservation (clean P0001, not a silent
+-- no-op — the row stays pending with its hold intact); (b) an Org A attendant
+-- CAN cancel any Org A reservation via cancel_reservation, releasing the hold;
+-- (c) an authenticated client cannot INSERT into audit_log directly — only the
+-- SECURITY DEFINER functions write it. Synthetic rows removed at the end.
+-- ---------------------------------------------------------------------------
+do $$
+declare
+  v int;
+  v_role text := current_user;
+  c_user1 uuid := '00000000-0000-0000-0000-0000000000d1';
+  c_user2 uuid := '00000000-0000-0000-0000-0000000000d2';
+  a3 uuid := '00000000-0000-0000-0000-0000000000a3';  -- seeded Org A attendant
+  org_a uuid := 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+  v_customer1 uuid;
+  v_customer2 uuid;
+  v_facility_a uuid;
+  v_space uuid;
+  v_rule uuid;
+  v_res uuid;
+  v_start timestamptz := date_trunc('hour', now()) + interval '300 days';
+begin
+  insert into auth.users
+    (instance_id, id, aud, role, email, encrypted_password,
+     email_confirmed_at, created_at, updated_at, raw_app_meta_data, raw_user_meta_data)
+  values
+    ('00000000-0000-0000-0000-000000000000', c_user1, 'authenticated', 'authenticated',
+     'rls-check-d1@parkos.dev', 'x', now(), now(), now(), '{}', '{}'),
+    ('00000000-0000-0000-0000-000000000000', c_user2, 'authenticated', 'authenticated',
+     'rls-check-d2@parkos.dev', 'x', now(), now(), now(), '{}', '{}')
+  on conflict (id) do nothing;
+
+  insert into public.customers (org_id, user_id, full_name)
+  values (org_a, c_user1, '__RLS_CHECK_D1__') returning id into v_customer1;
+  insert into public.customers (org_id, user_id, full_name)
+  values (org_a, c_user2, '__RLS_CHECK_D2__') returning id into v_customer2;
+
+  select f.id into v_facility_a from public.facilities f
+   where f.org_id = org_a and f.archived_at is null order by f.name limit 1;
+
+  select s.id into v_space
+    from public.spaces s join public.zones z on z.id = s.zone_id
+   where z.facility_id = v_facility_a
+     and s.archived_at is null and z.archived_at is null
+     and not exists (select 1 from public.space_holds h
+                      where h.space_id = s.id and h.released_at is null)
+   order by s.space_number limit 1;
+  if v_space is null then
+    raise exception 'CHECK8 FAIL: no hold-free space in facility A';
+  end if;
+
+  insert into public.price_rules (org_id, facility_id, hourly_rate_cents, priority)
+  values (org_a, v_facility_a, 100, -1000) returning id into v_rule;
+
+  -- customer 1 books
+  perform set_config('request.jwt.claims',
+    format('{"sub":"%s","role":"authenticated"}', c_user1), true);
+  perform set_config('request.jwt.claim.sub', c_user1::text, true);
+  execute 'set local role authenticated';
+  select r.reservation_id into v_res
+    from public.public_create_reservation(
+      v_facility_a, v_space, v_customer1, null,
+      v_start, v_start + interval '2 hours') r;
+
+  -- customer 2: cancel someone else's reservation -> NOT_AUTHORIZED
+  execute format('set local role %I', v_role);
+  perform set_config('request.jwt.claims',
+    format('{"sub":"%s","role":"authenticated"}', c_user2), true);
+  perform set_config('request.jwt.claim.sub', c_user2::text, true);
+  execute 'set local role authenticated';
+
+  begin
+    perform public.cancel_reservation(v_res, 'malicious');
+    raise exception 'CHECK8 FAIL: customer 2 cancelled another customer''s reservation';
+  exception
+    when sqlstate 'P0001' then
+      if sqlerrm <> 'NOT_AUTHORIZED' then
+        raise exception 'CHECK8 FAIL: wrong cancel rejection "%" (expected NOT_AUTHORIZED)', sqlerrm;
+      end if;
+  end;
+
+  -- customer 2: extend someone else's reservation -> NOT_AUTHORIZED
+  begin
+    perform public.extend_reservation(v_res, v_start + interval '5 hours');
+    raise exception 'CHECK8 FAIL: customer 2 extended another customer''s reservation';
+  exception
+    when sqlstate 'P0001' then
+      if sqlerrm <> 'NOT_AUTHORIZED' then
+        raise exception 'CHECK8 FAIL: wrong extend rejection "%" (expected NOT_AUTHORIZED)', sqlerrm;
+      end if;
+  end;
+
+  -- direct audit_log insert by an authenticated client -> denied
+  begin
+    insert into public.audit_log (org_id, actor_id, action, target_table, target_id)
+    values (org_a, c_user2, 'forged', 'reservations', v_res);
+    raise exception 'CHECK8 FAIL: authenticated client forged an audit_log row';
+  exception
+    when insufficient_privilege then null;  -- 42501: no INSERT grant, as intended
+  end;
+
+  -- the reservation must still be untouched (no silent no-op cancel)
+  execute format('set local role %I', v_role);
+  select count(*) into v from public.reservations
+   where id = v_res and status = 'pending';
+  if v <> 1 then raise exception 'CHECK8 FAIL: reservation not left pending after blocked cancel'; end if;
+  select count(*) into v from public.space_holds
+   where reservation_id = v_res and released_at is null;
+  if v <> 1 then raise exception 'CHECK8 FAIL: hold not left active after blocked cancel'; end if;
+
+  -- attendant a3 cancels via the override path -> allowed
+  perform set_config('request.jwt.claims',
+    format('{"sub":"%s","role":"authenticated"}', a3), true);
+  perform set_config('request.jwt.claim.sub', a3::text, true);
+  execute 'set local role authenticated';
+  perform public.cancel_reservation(v_res, 'override by attendant');
+
+  execute format('set local role %I', v_role);
+  select count(*) into v from public.reservations
+   where id = v_res and status = 'cancelled' and cancelled_by = a3;
+  if v <> 1 then raise exception 'CHECK8 FAIL: attendant cancel did not take effect'; end if;
+  select count(*) into v from public.space_holds
+   where reservation_id = v_res and released_at is null;
+  if v <> 0 then raise exception 'CHECK8 FAIL: attendant cancel did not release the hold'; end if;
+  select count(*) into v from public.audit_log
+   where target_id = v_res and action = 'cancel_reservation' and actor_id = a3;
+  if v <> 1 then raise exception 'CHECK8 FAIL: cancel did not write exactly one audit row'; end if;
+
+  -- cleanup as postgres; children first
+  delete from public.audit_log where target_id = v_res;
+  delete from public.space_holds where reservation_id = v_res;
+  delete from public.reservations where id = v_res;
+  delete from public.price_rules where id = v_rule;
+  delete from public.customers where id in (v_customer1, v_customer2);
+  delete from auth.users where id in (c_user1, c_user2);
+
+  raise notice 'CHECK8 PASS: cross-customer cancel/extend denied; attendant override works; audit_log unforgeable';
+end $$;
+
 -- The Management API suppresses RAISE NOTICE output. If every assertion above
 -- completes, return an explicit, machine-visible summary for CI/manual evidence.
 select check_name, result
 from (values
-  ('CHECK0',  'PASS: 13 RLS tables, 47 policies, 10 SECURITY DEFINER functions'),
+  ('CHECK0',  'PASS: 14 RLS tables, 48 policies, 15 SECURITY DEFINER functions'),
   ('CHECK0b', 'PASS: authenticated has S/I/U/D grants on all 13 RLS tables'),
   ('CHECK1',  'PASS: Org A sees exactly 2 facilities / 165 spaces, all Org A'),
   ('CHECK1b', 'PASS: Org B sees exactly 1 facility / 10 spaces, all Org B'),
@@ -503,6 +647,7 @@ from (values
   ('CHECK4',  'PASS: attendant denied facility insert and allowed customer insert'),
   ('CHECK5',  'PASS: admin created invite; manager rejected by RLS'),
   ('CHECK6',  'PASS: facility RPC denies attendant; admin bootstrap atomic and org-scoped'),
-  ('CHECK7',  'PASS: customer rows isolated; identity spoof rejected; availability tenant-clean')
+  ('CHECK7',  'PASS: customer rows isolated; identity spoof rejected; availability tenant-clean'),
+  ('CHECK8',  'PASS: cross-customer cancel/extend denied; attendant override works; audit_log unforgeable')
 ) as checks(check_name, result)
 order by check_name;
