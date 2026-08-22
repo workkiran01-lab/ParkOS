@@ -52,7 +52,7 @@ function Login() {
       <Card>
         <CardHeader>
           <CardTitle>Welcome back</CardTitle>
-          <CardDescription>Log in to manage your parking operation.</CardDescription>
+          <CardDescription>Log in to your account.</CardDescription>
         </CardHeader>
         <CardContent>
           <form className="space-y-4" onSubmit={submit}>

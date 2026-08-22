@@ -1,3 +1,4 @@
+import { useCallback, useEffect, useState } from 'react'
 import {
   createFileRoute,
   Link,
@@ -7,6 +8,7 @@ import {
 } from '@tanstack/react-router'
 import { AppShell } from '@/components/layout/AppShell'
 import { Button } from '@/components/ui/button'
+import { useAuth } from '@/hooks/useAuth'
 import { useRole } from '@/hooks/useRole'
 import { supabase } from '@/lib/supabase'
 
@@ -48,7 +50,30 @@ export const Route = createFileRoute('/app')({
 
 function AppLayout() {
   const navigate = useNavigate()
+  const { user } = useAuth()
   const { role, full_name: fullName } = useRole()
+  // A staff user who has also booked as a customer (a customers row linked to
+  // this login) gets a persistent link to their own bookings, so they never
+  // have to switch accounts. Staff who never booked don't see it.
+  const [hasCustomerRecord, setHasCustomerRecord] = useState(false)
+
+  const loadCustomerRecord = useCallback(async () => {
+    if (!user) {
+      setHasCustomerRecord(false)
+      return
+    }
+    const { data } = await supabase
+      .from('customers')
+      .select('id')
+      .eq('user_id', user.id)
+      .limit(1)
+      .maybeSingle()
+    setHasCustomerRecord(!!data)
+  }, [user])
+
+  useEffect(() => {
+    void Promise.resolve().then(loadCustomerRecord)
+  }, [loadCustomerRecord])
 
   async function signOut() {
     await supabase.auth.signOut()
@@ -92,9 +117,14 @@ function AppLayout() {
               </li>
             )}
           </ul>
-          <div className="border-t pt-4">
+          <div className="space-y-2 border-t pt-4">
             {fullName && (
-              <p className="mb-2 truncate text-xs text-muted-foreground">{fullName}</p>
+              <p className="truncate text-xs text-muted-foreground">{fullName}</p>
+            )}
+            {hasCustomerRecord && (
+              <Button variant="ghost" className="w-full" asChild>
+                <Link to="/my/reservations">My reservations</Link>
+              </Button>
             )}
             <Button variant="outline" className="w-full" onClick={signOut}>
               Sign out
