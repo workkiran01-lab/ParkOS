@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AcceptInviteRouteImport } from './routes/accept-invite'
 import { Route as AppRouteImport } from './routes/app'
+import { Route as AttendantRouteImport } from './routes/attendant'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as SignupRouteImport } from './routes/signup'
 import { Route as AppIndexRouteImport } from './routes/app/index'
@@ -21,6 +22,8 @@ import { Route as AppOverrideRouteImport } from './routes/app/override'
 import { Route as AppReservationsRouteImport } from './routes/app/reservations'
 import { Route as AppSetupRouteImport } from './routes/app/setup'
 import { Route as AppStaffRouteImport } from './routes/app/staff'
+import { Route as AttendantIndexRouteImport } from './routes/attendant/index'
+import { Route as AttendantActiveRouteImport } from './routes/attendant/active'
 import { Route as BookFacilityIdRouteImport } from './routes/book/$facilityId'
 import { Route as MyReservationsRouteImport } from './routes/my/reservations'
 import { Route as AppFacilitiesIndexRouteImport } from './routes/app/facilities/index'
@@ -39,6 +42,11 @@ const AcceptInviteRoute = AcceptInviteRouteImport.update({
 const AppRoute = AppRouteImport.update({
   id: '/app',
   path: '/app',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AttendantRoute = AttendantRouteImport.update({
+  id: '/attendant',
+  path: '/attendant',
   getParentRoute: () => rootRouteImport,
 } as any)
 const LoginRoute = LoginRouteImport.update({
@@ -86,6 +94,16 @@ const AppStaffRoute = AppStaffRouteImport.update({
   path: '/staff',
   getParentRoute: () => AppRoute,
 } as any)
+const AttendantIndexRoute = AttendantIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => AttendantRoute,
+} as any)
+const AttendantActiveRoute = AttendantActiveRouteImport.update({
+  id: '/active',
+  path: '/active',
+  getParentRoute: () => AttendantRoute,
+} as any)
 const BookFacilityIdRoute = BookFacilityIdRouteImport.update({
   id: '/book/$facilityId',
   path: '/book/$facilityId',
@@ -111,6 +129,7 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/accept-invite': typeof AcceptInviteRoute
   '/app': typeof AppRouteWithChildren
+  '/attendant': typeof AttendantRouteWithChildren
   '/login': typeof LoginRoute
   '/signup': typeof SignupRoute
   '/app/availability': typeof AppAvailabilityRoute
@@ -119,9 +138,11 @@ export interface FileRoutesByFullPath {
   '/app/reservations': typeof AppReservationsRoute
   '/app/setup': typeof AppSetupRoute
   '/app/staff': typeof AppStaffRoute
+  '/attendant/active': typeof AttendantActiveRoute
   '/book/$facilityId': typeof BookFacilityIdRoute
   '/my/reservations': typeof MyReservationsRoute
   '/app/': typeof AppIndexRoute
+  '/attendant/': typeof AttendantIndexRoute
   '/app/facilities/$facilityId': typeof AppFacilitiesFacilityIdRoute
   '/app/facilities/': typeof AppFacilitiesIndexRoute
 }
@@ -136,9 +157,11 @@ export interface FileRoutesByTo {
   '/app/reservations': typeof AppReservationsRoute
   '/app/setup': typeof AppSetupRoute
   '/app/staff': typeof AppStaffRoute
+  '/attendant/active': typeof AttendantActiveRoute
   '/book/$facilityId': typeof BookFacilityIdRoute
   '/my/reservations': typeof MyReservationsRoute
   '/app': typeof AppIndexRoute
+  '/attendant': typeof AttendantIndexRoute
   '/app/facilities/$facilityId': typeof AppFacilitiesFacilityIdRoute
   '/app/facilities': typeof AppFacilitiesIndexRoute
 }
@@ -147,6 +170,7 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/accept-invite': typeof AcceptInviteRoute
   '/app': typeof AppRouteWithChildren
+  '/attendant': typeof AttendantRouteWithChildren
   '/login': typeof LoginRoute
   '/signup': typeof SignupRoute
   '/app/availability': typeof AppAvailabilityRoute
@@ -155,9 +179,11 @@ export interface FileRoutesById {
   '/app/reservations': typeof AppReservationsRoute
   '/app/setup': typeof AppSetupRoute
   '/app/staff': typeof AppStaffRoute
+  '/attendant/active': typeof AttendantActiveRoute
   '/book/$facilityId': typeof BookFacilityIdRoute
   '/my/reservations': typeof MyReservationsRoute
   '/app/': typeof AppIndexRoute
+  '/attendant/': typeof AttendantIndexRoute
   '/app/facilities/$facilityId': typeof AppFacilitiesFacilityIdRoute
   '/app/facilities/': typeof AppFacilitiesIndexRoute
 }
@@ -167,6 +193,7 @@ export interface FileRouteTypes {
     | '/'
     | '/accept-invite'
     | '/app'
+    | '/attendant'
     | '/login'
     | '/signup'
     | '/app/availability'
@@ -175,9 +202,11 @@ export interface FileRouteTypes {
     | '/app/reservations'
     | '/app/setup'
     | '/app/staff'
+    | '/attendant/active'
     | '/book/$facilityId'
     | '/my/reservations'
     | '/app/'
+    | '/attendant/'
     | '/app/facilities/$facilityId'
     | '/app/facilities/'
   fileRoutesByTo: FileRoutesByTo
@@ -192,9 +221,11 @@ export interface FileRouteTypes {
     | '/app/reservations'
     | '/app/setup'
     | '/app/staff'
+    | '/attendant/active'
     | '/book/$facilityId'
     | '/my/reservations'
     | '/app'
+    | '/attendant'
     | '/app/facilities/$facilityId'
     | '/app/facilities'
   id:
@@ -202,6 +233,7 @@ export interface FileRouteTypes {
     | '/'
     | '/accept-invite'
     | '/app'
+    | '/attendant'
     | '/login'
     | '/signup'
     | '/app/availability'
@@ -210,9 +242,11 @@ export interface FileRouteTypes {
     | '/app/reservations'
     | '/app/setup'
     | '/app/staff'
+    | '/attendant/active'
     | '/book/$facilityId'
     | '/my/reservations'
     | '/app/'
+    | '/attendant/'
     | '/app/facilities/$facilityId'
     | '/app/facilities/'
   fileRoutesById: FileRoutesById
@@ -221,6 +255,7 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AcceptInviteRoute: typeof AcceptInviteRoute
   AppRoute: typeof AppRouteWithChildren
+  AttendantRoute: typeof AttendantRouteWithChildren
   LoginRoute: typeof LoginRoute
   SignupRoute: typeof SignupRoute
   BookFacilityIdRoute: typeof BookFacilityIdRoute
@@ -248,6 +283,13 @@ declare module '@tanstack/react-router' {
       path: '/app'
       fullPath: '/app'
       preLoaderRoute: typeof AppRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/attendant': {
+      id: '/attendant'
+      path: '/attendant'
+      fullPath: '/attendant'
+      preLoaderRoute: typeof AttendantRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/login': {
@@ -313,6 +355,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppStaffRouteImport
       parentRoute: typeof AppRoute
     }
+    '/attendant/': {
+      id: '/attendant/'
+      path: '/'
+      fullPath: '/attendant/'
+      preLoaderRoute: typeof AttendantIndexRouteImport
+      parentRoute: typeof AttendantRoute
+    }
+    '/attendant/active': {
+      id: '/attendant/active'
+      path: '/active'
+      fullPath: '/attendant/active'
+      preLoaderRoute: typeof AttendantActiveRouteImport
+      parentRoute: typeof AttendantRoute
+    }
     '/book/$facilityId': {
       id: '/book/$facilityId'
       path: '/book/$facilityId'
@@ -370,10 +426,25 @@ const AppRouteChildren: AppRouteChildren = {
 
 const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)
 
+interface AttendantRouteChildren {
+  AttendantActiveRoute: typeof AttendantActiveRoute
+  AttendantIndexRoute: typeof AttendantIndexRoute
+}
+
+const AttendantRouteChildren: AttendantRouteChildren = {
+  AttendantActiveRoute: AttendantActiveRoute,
+  AttendantIndexRoute: AttendantIndexRoute,
+}
+
+const AttendantRouteWithChildren = AttendantRoute._addFileChildren(
+  AttendantRouteChildren,
+)
+
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AcceptInviteRoute: AcceptInviteRoute,
   AppRoute: AppRouteWithChildren,
+  AttendantRoute: AttendantRouteWithChildren,
   LoginRoute: LoginRoute,
   SignupRoute: SignupRoute,
   BookFacilityIdRoute: BookFacilityIdRoute,

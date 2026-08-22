@@ -6,7 +6,7 @@
 -- Depends on the dev seed (20260819040100); like the seed, dev-project only.
 
 -- ---------------------------------------------------------------------------
--- CHECK 0: the DDL actually landed — 16 RLS-enabled tables, 50 policies,
+-- CHECK 0: the DDL actually landed — 17 RLS-enabled tables, 52 policies,
 -- all authorization/bootstrap/lifecycle functions present and SECURITY DEFINER.
 -- ---------------------------------------------------------------------------
 do $$
@@ -17,19 +17,20 @@ begin
      and tablename in ('organizations','profiles','memberships','facilities',
                        'zones','spaces','customers','vehicles','reservations',
                        'permits','price_rules','space_holds','invites','audit_log',
-                       'payments','processed_stripe_events');
-  if v <> 16 then
-    raise exception 'CHECK0 FAIL: expected 16 RLS-enabled tables, found %', v;
+                       'payments','processed_stripe_events','vehicle_photos');
+  if v <> 17 then
+    raise exception 'CHECK0 FAIL: expected 17 RLS-enabled tables, found %', v;
   end if;
 
   -- 36 through Week 4, +1 in Week 5 (space_holds_update for release-early),
   -- +1 in Week 6 (price_rules_update), +9 in Week 7 (customer self-service:
   -- customers x3, vehicles x3, reservations x2, space_holds insert x1),
   -- +1 in Week 8 (audit_log_select), +2 in Week 9 (payments SELECT for
-  -- members and owners; processed_stripe_events intentionally has none).
+  -- members and owners; processed_stripe_events intentionally has none),
+  -- +2 in Week 10 (vehicle_photos SELECT for members, INSERT for staff).
   select count(*) into v from pg_policies where schemaname = 'public';
-  if v <> 50 then
-    raise exception 'CHECK0 FAIL: expected 50 policies, found %', v;
+  if v <> 52 then
+    raise exception 'CHECK0 FAIL: expected 52 policies, found %', v;
   end if;
 
   select count(*) into v
@@ -43,9 +44,10 @@ begin
                        'public_create_reservation',
                        'cancel_reservation','extend_reservation',
                        'confirm_reservation','mark_no_shows','get_my_reservations',
-                       'process_stripe_event')
+                       'process_stripe_event',
+                       'check_in_reservation','check_in_walk_in','check_out_reservation')
       and p.prosecdef;
-  if v <> 16 then
+  if v <> 19 then
     raise exception 'CHECK0 FAIL: helper functions missing or not SECURITY DEFINER (found %)', v;
   end if;
 
@@ -57,7 +59,7 @@ begin
   if v <> 1 then
     raise exception 'CHECK0 FAIL: is_own_customer missing or wrongly SECURITY DEFINER';
   end if;
-  raise notice 'CHECK0 PASS: 16 RLS tables, 50 policies, 16 SECURITY DEFINER functions';
+  raise notice 'CHECK0 PASS: 17 RLS tables, 52 policies, 19 SECURITY DEFINER functions';
 end $$;
 
 -- ---------------------------------------------------------------------------
@@ -950,11 +952,158 @@ begin
   raise notice 'CHECK9 PASS: payments isolated/read-only; webhook service role is atomic and idempotent';
 end $$;
 
+-- ---------------------------------------------------------------------------
+-- CHECK 10: attendant check-in/out authorization + vehicle photo tenancy.
+-- Proves: (a) an Org A attendant cannot check in OR check out an Org B
+-- reservation (ROLE_NOT_ALLOWED, and Org B's reservation is left untouched);
+-- (b) vehicle_photos rows are org-scoped — Org A staff see only Org A's,
+-- Org B staff only Org B's; (c) the vehicle-photos storage bucket policies
+-- enforce the same org boundary on storage.objects by the org_id path prefix.
+-- Synthetic customers, reservations, photo rows, and storage objects are all
+-- removed at the end, so the script stays data-neutral.
+-- ---------------------------------------------------------------------------
+-- Storage's protect_delete() trigger forbids direct DELETE on storage.objects,
+-- so instead of cleaning up we do ALL of CHECK10 inside a subtransaction and
+-- roll it back on success (sentinel) — nothing this block writes persists,
+-- including the synthetic storage objects. A real assertion failure re-raises
+-- and aborts (its writes also roll back), so the block is data-neutral either
+-- way without deleting anything.
+do $$
+declare
+  v int;
+  v_role text := current_user;
+  org_a uuid := 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+  org_b uuid := 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb';
+  a1 uuid := '00000000-0000-0000-0000-0000000000a1';
+  a3 uuid := '00000000-0000-0000-0000-0000000000a3';
+  b1 uuid := '00000000-0000-0000-0000-0000000000b1';
+  v_cust_a uuid; v_cust_b uuid;
+  v_fac_a uuid;  v_fac_b uuid;
+  v_space_a uuid; v_space_b uuid;
+  v_res_a uuid;  v_res_b uuid;
+  v_photo_a uuid; v_photo_b uuid;
+  name_a text; name_b text;
+  v_win tstzrange := tstzrange(
+    date_trunc('hour', now()) + interval '400 days',
+    date_trunc('hour', now()) + interval '400 days 1 hour', '[)');
+begin
+  begin  -- subtransaction: everything below is rolled back before we return
+    select z.facility_id, s.id into v_fac_a, v_space_a
+      from public.spaces s join public.zones z on z.id = s.zone_id
+     where s.org_id = org_a and s.archived_at is null and z.archived_at is null
+     order by s.id limit 1;
+    select z.facility_id, s.id into v_fac_b, v_space_b
+      from public.spaces s join public.zones z on z.id = s.zone_id
+     where s.org_id = org_b and s.archived_at is null and z.archived_at is null
+     order by s.id limit 1;
+
+    insert into public.customers (org_id, full_name) values (org_a, '__RLS10_A__')
+      returning id into v_cust_a;
+    insert into public.customers (org_id, full_name) values (org_b, '__RLS10_B__')
+      returning id into v_cust_b;
+
+    insert into public.reservations (org_id, facility_id, space_id, customer_id,
+      during, status, price_breakdown, total_cents, currency)
+    values (org_a, v_fac_a, v_space_a, v_cust_a, v_win, 'pending',
+            '{"line_items":[]}'::jsonb, 1000, 'USD') returning id into v_res_a;
+    insert into public.reservations (org_id, facility_id, space_id, customer_id,
+      during, status, price_breakdown, total_cents, currency)
+    values (org_b, v_fac_b, v_space_b, v_cust_b, v_win, 'pending',
+            '{"line_items":[]}'::jsonb, 1000, 'USD') returning id into v_res_b;
+
+    insert into public.vehicle_photos (org_id, reservation_id, storage_path)
+    values (org_a, v_res_a, org_a::text || '/' || v_res_a::text || '/__RLS10__.jpg')
+      returning id into v_photo_a;
+    insert into public.vehicle_photos (org_id, reservation_id, storage_path)
+    values (org_b, v_res_b, org_b::text || '/' || v_res_b::text || '/__RLS10__.jpg')
+      returning id into v_photo_b;
+
+    name_a := org_a::text || '/__RLS10__/a.jpg';
+    name_b := org_b::text || '/__RLS10__/b.jpg';
+    insert into storage.objects (bucket_id, name) values ('vehicle-photos', name_a);
+    insert into storage.objects (bucket_id, name) values ('vehicle-photos', name_b);
+
+    -- (a) Org A attendant cannot check in / out an Org B reservation.
+    perform set_config('request.jwt.claims',
+      format('{"sub":"%s","role":"authenticated"}', a3), true);
+    perform set_config('request.jwt.claim.sub', a3::text, true);
+    execute 'set local role authenticated';
+
+    begin
+      perform public.check_in_reservation(v_res_b);
+      raise exception 'CHECK10 FAIL: Org A attendant checked in an Org B reservation';
+    exception
+      when sqlstate 'P0001' then
+        if sqlerrm <> 'ROLE_NOT_ALLOWED' then
+          raise exception 'CHECK10 FAIL: check-in wrong rejection "%"', sqlerrm;
+        end if;
+    end;
+
+    begin
+      perform public.check_out_reservation(v_res_b, 0);
+      raise exception 'CHECK10 FAIL: Org A attendant checked out an Org B reservation';
+    exception
+      when sqlstate 'P0001' then
+        if sqlerrm <> 'ROLE_NOT_ALLOWED' then
+          raise exception 'CHECK10 FAIL: check-out wrong rejection "%"', sqlerrm;
+        end if;
+    end;
+
+    execute format('set local role %I', v_role);
+    select count(*) into v from public.reservations
+     where id = v_res_b and status = 'pending';
+    if v <> 1 then raise exception 'CHECK10 FAIL: Org B reservation state changed'; end if;
+
+    -- (b)+(c) Org A admin sees only Org A photo row and storage object.
+    perform set_config('request.jwt.claims',
+      format('{"sub":"%s","role":"authenticated"}', a1), true);
+    perform set_config('request.jwt.claim.sub', a1::text, true);
+    execute 'set local role authenticated';
+
+    select count(*) into v from public.vehicle_photos where id = v_photo_a;
+    if v <> 1 then raise exception 'CHECK10 FAIL: Org A admin cannot see own vehicle_photo'; end if;
+    select count(*) into v from public.vehicle_photos where id = v_photo_b;
+    if v <> 0 then raise exception 'CHECK10 FAIL: Org A admin read Org B vehicle_photo — LEAK'; end if;
+
+    select count(*) into v from storage.objects
+     where bucket_id = 'vehicle-photos' and name = name_a;
+    if v <> 1 then raise exception 'CHECK10 FAIL: Org A admin cannot read own storage object'; end if;
+    select count(*) into v from storage.objects
+     where bucket_id = 'vehicle-photos' and name = name_b;
+    if v <> 0 then raise exception 'CHECK10 FAIL: Org A admin read Org B storage object — LEAK'; end if;
+
+    -- Mirror: Org B admin sees only Org B.
+    execute format('set local role %I', v_role);
+    perform set_config('request.jwt.claims',
+      format('{"sub":"%s","role":"authenticated"}', b1), true);
+    perform set_config('request.jwt.claim.sub', b1::text, true);
+    execute 'set local role authenticated';
+
+    select count(*) into v from public.vehicle_photos where id = v_photo_a;
+    if v <> 0 then raise exception 'CHECK10 FAIL: Org B admin read Org A vehicle_photo — LEAK'; end if;
+    select count(*) into v from storage.objects
+     where bucket_id = 'vehicle-photos' and name = name_a;
+    if v <> 0 then raise exception 'CHECK10 FAIL: Org B admin read Org A storage object — LEAK'; end if;
+
+    -- All assertions passed: roll the whole subtransaction back via a sentinel.
+    execute format('set local role %I', v_role);
+    raise exception using errcode = 'P0001', message = '__CHECK10_ROLLBACK_OK__';
+  exception
+    when others then
+      execute format('set local role %I', v_role);
+      if sqlerrm <> '__CHECK10_ROLLBACK_OK__' then
+        raise;  -- a real failure (or unexpected error): propagate and abort
+      end if;
+  end;
+
+  raise notice 'CHECK10 PASS: cross-org check-in/out denied; vehicle_photos + storage objects org-scoped';
+end $$;
+
 -- The Management API suppresses RAISE NOTICE output. If every assertion above
 -- completes, return an explicit, machine-visible summary for CI/manual evidence.
 select check_name, result
 from (values
-  ('CHECK0',  'PASS: 16 RLS tables, 50 policies, 16 SECURITY DEFINER functions'),
+  ('CHECK0',  'PASS: 17 RLS tables, 52 policies, 19 SECURITY DEFINER functions'),
   ('CHECK0b', 'PASS: authenticated has S/I/U/D grants on all 13 RLS tables'),
   ('CHECK0c', 'PASS: payment writes and Stripe event processing are service-role-only'),
   ('CHECK1',  'PASS: Org A sees exactly 2 facilities / 165 spaces, all Org A'),
@@ -966,6 +1115,7 @@ from (values
   ('CHECK6',  'PASS: facility RPC denies attendant; admin bootstrap atomic and org-scoped'),
   ('CHECK7',  'PASS: customer rows isolated; identity spoof rejected; availability tenant-clean'),
   ('CHECK8',  'PASS: cross-customer cancel/extend denied; attendant override works; audit_log unforgeable'),
-  ('CHECK9',  'PASS: payments isolated/read-only; webhook service role atomic and idempotent')
+  ('CHECK9',  'PASS: payments isolated/read-only; webhook service role atomic and idempotent'),
+  ('CHECK10', 'PASS: cross-org check-in/out denied; vehicle_photos + storage objects org-scoped')
 ) as checks(check_name, result)
 order by check_name;
