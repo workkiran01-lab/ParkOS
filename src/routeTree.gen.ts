@@ -17,6 +17,7 @@ import { Route as LoginRouteImport } from './routes/login'
 import { Route as SignupRouteImport } from './routes/signup'
 import { Route as AppIndexRouteImport } from './routes/app/index'
 import { Route as AppAvailabilityRouteImport } from './routes/app/availability'
+import { Route as AppOccupancyRouteImport } from './routes/app/occupancy'
 import { Route as AppOnboardingRouteImport } from './routes/app/onboarding'
 import { Route as AppOverrideRouteImport } from './routes/app/override'
 import { Route as AppReservationsRouteImport } from './routes/app/reservations'
@@ -67,6 +68,11 @@ const AppIndexRoute = AppIndexRouteImport.update({
 const AppAvailabilityRoute = AppAvailabilityRouteImport.update({
   id: '/availability',
   path: '/availability',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppOccupancyRoute = AppOccupancyRouteImport.update({
+  id: '/occupancy',
+  path: '/occupancy',
   getParentRoute: () => AppRoute,
 } as any)
 const AppOnboardingRoute = AppOnboardingRouteImport.update({
@@ -133,6 +139,7 @@ export interface FileRoutesByFullPath {
   '/login': typeof LoginRoute
   '/signup': typeof SignupRoute
   '/app/availability': typeof AppAvailabilityRoute
+  '/app/occupancy': typeof AppOccupancyRoute
   '/app/onboarding': typeof AppOnboardingRoute
   '/app/override': typeof AppOverrideRoute
   '/app/reservations': typeof AppReservationsRoute
@@ -152,6 +159,7 @@ export interface FileRoutesByTo {
   '/login': typeof LoginRoute
   '/signup': typeof SignupRoute
   '/app/availability': typeof AppAvailabilityRoute
+  '/app/occupancy': typeof AppOccupancyRoute
   '/app/onboarding': typeof AppOnboardingRoute
   '/app/override': typeof AppOverrideRoute
   '/app/reservations': typeof AppReservationsRoute
@@ -174,6 +182,7 @@ export interface FileRoutesById {
   '/login': typeof LoginRoute
   '/signup': typeof SignupRoute
   '/app/availability': typeof AppAvailabilityRoute
+  '/app/occupancy': typeof AppOccupancyRoute
   '/app/onboarding': typeof AppOnboardingRoute
   '/app/override': typeof AppOverrideRoute
   '/app/reservations': typeof AppReservationsRoute
@@ -197,6 +206,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/signup'
     | '/app/availability'
+    | '/app/occupancy'
     | '/app/onboarding'
     | '/app/override'
     | '/app/reservations'
@@ -216,6 +226,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/signup'
     | '/app/availability'
+    | '/app/occupancy'
     | '/app/onboarding'
     | '/app/override'
     | '/app/reservations'
@@ -237,6 +248,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/signup'
     | '/app/availability'
+    | '/app/occupancy'
     | '/app/onboarding'
     | '/app/override'
     | '/app/reservations'
@@ -318,6 +330,13 @@ declare module '@tanstack/react-router' {
       path: '/availability'
       fullPath: '/app/availability'
       preLoaderRoute: typeof AppAvailabilityRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/app/occupancy': {
+      id: '/app/occupancy'
+      path: '/occupancy'
+      fullPath: '/app/occupancy'
+      preLoaderRoute: typeof AppOccupancyRouteImport
       parentRoute: typeof AppRoute
     }
     '/app/onboarding': {
@@ -402,6 +421,7 @@ declare module '@tanstack/react-router' {
 
 interface AppRouteChildren {
   AppAvailabilityRoute: typeof AppAvailabilityRoute
+  AppOccupancyRoute: typeof AppOccupancyRoute
   AppOnboardingRoute: typeof AppOnboardingRoute
   AppOverrideRoute: typeof AppOverrideRoute
   AppReservationsRoute: typeof AppReservationsRoute
@@ -414,6 +434,7 @@ interface AppRouteChildren {
 
 const AppRouteChildren: AppRouteChildren = {
   AppAvailabilityRoute: AppAvailabilityRoute,
+  AppOccupancyRoute: AppOccupancyRoute,
   AppOnboardingRoute: AppOnboardingRoute,
   AppOverrideRoute: AppOverrideRoute,
   AppReservationsRoute: AppReservationsRoute,

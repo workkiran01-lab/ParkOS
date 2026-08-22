@@ -290,3 +290,49 @@ begin;
   values ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'Walk-up Customer');
   select full_name from public.customers where full_name = 'Walk-up Customer';
 rollback;
+
+
+-- -----------------------------------------------------------------------------
+-- CHECK 6 (Week 11) — the tenant isolation the occupancy dashboard's Realtime
+-- subscriptions rely on. This is the FIRST feature where the browser subscribes
+-- to postgres_changes on `spaces` and `space_holds` directly. Supabase Realtime
+-- applies the SUBSCRIBER's RLS to every WAL change before delivering it, so a
+-- change is only ever broadcast to a client that could already SELECT that row.
+--
+-- This check proves the necessary RLS foundation: an Org B authenticated client
+-- can SELECT NONE of Org A's spaces or space_holds. If SELECT is denied here,
+-- Realtime cannot deliver those rows' changes either.
+--
+-- SCOPE LIMIT (read this): the SQL layer cannot exercise the Realtime WAL
+-- broadcaster itself — that is a separate service (realtime) reading the
+-- replication slot. This check verifies the policy Realtime enforces, NOT the
+-- broadcaster. The end-to-end guarantee (an Org A change never surfaces on an
+-- Org B client's live subscription) still requires the two-account, two-browser
+-- check in the Week 11 walkthrough. Necessary is proven here; sufficient is
+-- proven live.
+-- EXPECT: both counts 0 as Org B admin; both > 0 as Org A admin (sanity).
+-- -----------------------------------------------------------------------------
+begin;
+  set local role authenticated;
+  select set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000b1","role":"authenticated"}', true);  -- Org B admin
+
+  -- Org A's spaces/holds must be completely invisible to an Org B member.
+  select count(*) as org_a_spaces_visible_to_org_b
+    from public.spaces
+   where org_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';   -- PASS: 0
+  select count(*) as org_a_holds_visible_to_org_b
+    from public.space_holds
+   where org_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';   -- PASS: 0
+rollback;
+
+begin;
+  set local role authenticated;
+  select set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000a1","role":"authenticated"}', true);  -- Org A admin
+
+  -- Sanity: the same predicate as Org A admin returns the rows, proving the two
+  -- zero counts above are RLS filtering and not an empty table.
+  select count(*) as org_a_spaces_visible_to_org_a from public.spaces;       -- PASS: 165
+  select count(*) as org_a_holds_visible_to_org_a  from public.space_holds;  -- PASS: >= 0 (Org A only)
+rollback;

@@ -97,6 +97,9 @@ function AppLayout() {
                   <NavLink to="/attendant">Booth (check-in)</NavLink>
                 </li>
                 <li>
+                  <NavLink to="/app/occupancy">Occupancy</NavLink>
+                </li>
+                <li>
                   <NavLink to="/app/availability">Availability</NavLink>
                 </li>
                 <li>
@@ -150,6 +153,7 @@ function NavLink({
     | '/app/onboarding'
     | '/app/staff'
     | '/app/facilities'
+    | '/app/occupancy'
     | '/app/availability'
     | '/app/reservations'
     | '/app/override'
