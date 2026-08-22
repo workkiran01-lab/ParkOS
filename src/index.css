@@ -11,10 +11,11 @@
     sans-serif;
 
   /* Parking spot status tokens. Swap values here, never in components. */
-  --color-available: var(--status-available);
-  --color-occupied: var(--status-occupied);
-  --color-reserved: var(--status-reserved);
-  --color-maintenance: var(--status-maintenance);
+  --color-status-available: var(--status-available);
+  --color-status-occupied: var(--status-occupied);
+  --color-status-reserved: var(--status-reserved);
+  --color-status-maintenance: var(--status-maintenance);
+  --color-status-permit: var(--status-permit);
 }
 
 @theme inline {
@@ -102,6 +103,7 @@
   --status-occupied: oklch(0.586 0.253 17.585);
   --status-reserved: oklch(0.769 0.188 70.08);
   --status-maintenance: oklch(0.551 0.027 264.364);
+  --status-permit: oklch(0.546 0.245 262.881);
 }
 
 .dark {
@@ -141,6 +143,7 @@
   --status-occupied: oklch(0.645 0.246 16.439);
   --status-reserved: oklch(0.828 0.189 84.429);
   --status-maintenance: oklch(0.707 0.022 261.325);
+  --status-permit: oklch(0.623 0.214 259.815);
 }
 
 @layer base {

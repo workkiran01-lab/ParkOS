@@ -11,6 +11,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
+import { friendlyError } from '@/lib/errors'
 import { dollars, isoToLocalInput } from '@/lib/format'
 import { supabase } from '@/lib/supabase'
 import { Field } from '@/routes/login'
@@ -24,6 +25,8 @@ type Props = {
   /** Staff see a Confirm action and use the staff quote function; customers
    * use the elevated public wrapper. */
   isStaff: boolean
+  /** Once Checkout starts, changing the priced window would invalidate it. */
+  allowExtend?: boolean
   onDone: () => void | Promise<void>
 }
 
@@ -36,6 +39,7 @@ export function ReservationActions({
   startIso,
   endIso,
   isStaff,
+  allowExtend = true,
   onDone,
 }: Props) {
   const [cancelOpen, setCancelOpen] = useState(false)
@@ -50,20 +54,6 @@ export function ReservationActions({
     return <span className="text-xs text-muted-foreground">—</span>
   }
 
-  async function confirmReservation() {
-    setBusy(true)
-    const { error: confirmError } = await supabase.rpc('confirm_reservation', {
-      p_reservation_id: reservationId,
-    })
-    setBusy(false)
-    if (confirmError) {
-      toast.error(confirmError.message)
-      return
-    }
-    toast.success('Reservation confirmed')
-    await onDone()
-  }
-
   async function cancel(event: FormEvent) {
     event.preventDefault()
     setBusy(true)
@@ -74,7 +64,12 @@ export function ReservationActions({
     })
     setBusy(false)
     if (cancelError) {
-      setError(cancelError.message)
+      setError(
+        friendlyError(
+          cancelError,
+          'The reservation could not be cancelled. Please try again.',
+        ),
+      )
       return
     }
     setCancelOpen(false)
@@ -100,7 +95,12 @@ export function ReservationActions({
     })
     setBusy(false)
     if (quoteError) {
-      setError(quoteError.message)
+      setError(
+        friendlyError(
+          quoteError,
+          'The updated price could not be calculated. Please try again.',
+        ),
+      )
       return
     }
     setPreview(data as QuoteBreakdown)
@@ -120,11 +120,7 @@ export function ReservationActions({
     })
     setBusy(false)
     if (extendError) {
-      setError(
-        extendError.message === 'SPACE_UNAVAILABLE'
-          ? 'That longer window collides with another hold — the reservation was left unchanged.'
-          : extendError.message,
-      )
+      setError(friendlyError(extendError, 'The reservation could not be extended.'))
       return
     }
     setExtendOpen(false)
@@ -135,23 +131,20 @@ export function ReservationActions({
 
   return (
     <div className="flex flex-wrap gap-2">
-      {isStaff && status === 'pending' && (
-        <Button size="sm" disabled={busy} onClick={confirmReservation}>
-          Confirm
+      {allowExtend && (
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={() => {
+            setNewEnd(isoToLocalInput(endIso))
+            setPreview(null)
+            setError(null)
+            setExtendOpen(true)
+          }}
+        >
+          Extend
         </Button>
       )}
-      <Button
-        size="sm"
-        variant="outline"
-        onClick={() => {
-          setNewEnd(isoToLocalInput(endIso))
-          setPreview(null)
-          setError(null)
-          setExtendOpen(true)
-        }}
-      >
-        Extend
-      </Button>
       <Button
         size="sm"
         variant="destructive"

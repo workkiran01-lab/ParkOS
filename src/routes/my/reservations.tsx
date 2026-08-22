@@ -1,5 +1,10 @@
-import { useCallback, useEffect, useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react'
 import { createFileRoute, Link } from '@tanstack/react-router'
+import { CheckCircle2, Clock3, RefreshCw, XCircle } from 'lucide-react'
+import {
+  PaymentStatusBadge,
+  PayNowButton,
+} from '@/components/payments/PaymentControls'
 import { ReservationActions } from '@/components/reservations/ReservationActions'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -21,8 +26,13 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { useAuth } from '@/hooks/useAuth'
+import { friendlyError } from '@/lib/errors'
 import { dollars } from '@/lib/format'
 import { formatRange, parseTstzrange } from '@/lib/holds'
+import {
+  paymentsByReservation,
+  type PaymentSummary,
+} from '@/lib/payments'
 import { supabase } from '@/lib/supabase'
 import { AuthPage, Field } from '@/routes/login'
 
@@ -40,35 +50,153 @@ type ReservationRow = {
   created_at: string
 }
 
+type DisplayRow = ReservationRow & {
+  payment: PaymentSummary | null
+}
+
+type ReservationSearch = {
+  checkout?: 'success' | 'cancelled'
+  reservation_id?: string
+  session_id?: string
+}
+
 export const Route = createFileRoute('/my/reservations')({
+  validateSearch: (search: Record<string, unknown>): ReservationSearch => ({
+    checkout:
+      search.checkout === 'success' || search.checkout === 'cancelled'
+        ? search.checkout
+        : undefined,
+    reservation_id:
+      typeof search.reservation_id === 'string'
+        ? search.reservation_id
+        : undefined,
+    session_id:
+      typeof search.session_id === 'string' ? search.session_id : undefined,
+  }),
   component: MyReservations,
 })
 
 function MyReservations() {
+  const { checkout, reservation_id: returnedReservationId } = Route.useSearch()
   const { user, loading: authLoading } = useAuth()
-  const [rows, setRows] = useState<ReservationRow[] | null>(null)
+  const [rows, setRows] = useState<DisplayRow[]>([])
+  const [loaded, setLoaded] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [refreshing, setRefreshing] = useState(false)
+  const [pollTimedOut, setPollTimedOut] = useState(false)
 
-  // inline login (customers never go through the staff /login route)
+  // Inline login keeps customers out of the staff-only application shell.
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [authError, setAuthError] = useState<string | null>(null)
   const [authBusy, setAuthBusy] = useState(false)
 
-  const load = useCallback(async () => {
-    // One elevated call returns the caller's own reservations across every
-    // operator, with space/facility labels their reservation RLS can't join to.
+  const load = useCallback(async (): Promise<DisplayRow[] | null> => {
+    setError(null)
     const { data, error: loadError } = await supabase.rpc('get_my_reservations')
     if (loadError) {
-      setError(loadError.message)
-      return
+      setError(
+        friendlyError(
+          loadError,
+          'Your reservations could not be loaded. Please try again.',
+        ),
+      )
+      setLoaded(true)
+      return null
     }
-    setRows((data ?? []) as ReservationRow[])
+
+    const reservations = (data ?? []) as ReservationRow[]
+    const reservationIds = reservations.map((row) => row.reservation_id)
+    let paymentRows: PaymentSummary[] = []
+
+    if (reservationIds.length > 0) {
+      const { data: payments, error: paymentError } = await supabase
+        .from('payments')
+        .select(
+          'id, reservation_id, stripe_checkout_session_id, amount_cents, currency, status, created_at',
+        )
+        .in('reservation_id', reservationIds)
+        .order('created_at', { ascending: false })
+
+      if (paymentError) {
+        setError(
+          friendlyError(
+            paymentError,
+            'Payment details could not be loaded. Please try again.',
+          ),
+        )
+        setLoaded(true)
+        return null
+      }
+      paymentRows = (payments ?? []) as PaymentSummary[]
+    }
+
+    const paymentByReservation = paymentsByReservation(paymentRows)
+    const displayRows = reservations.map((row) => ({
+      ...row,
+      payment: paymentByReservation.get(row.reservation_id) ?? null,
+    }))
+    setRows(displayRows)
+    setLoaded(true)
+    return displayRows
   }, [])
 
   useEffect(() => {
     if (!authLoading && user) void Promise.resolve().then(load)
   }, [authLoading, user, load])
+
+  useEffect(() => {
+    if (checkout !== 'success' || !returnedReservationId || !user) return
+
+    let cancelled = false
+    let timer: number | undefined
+    let attempts = 0
+    // Deferred so no setState runs synchronously in the effect body; the guard
+    // keeps a torn-down cycle from clearing a later cycle's timed-out flag.
+    void Promise.resolve().then(() => {
+      if (!cancelled) setPollTimedOut(false)
+    })
+
+    async function poll() {
+      const latest = await load()
+      if (cancelled || !latest) return
+
+      const reservation = latest.find(
+        (row) => row.reservation_id === returnedReservationId,
+      )
+      if (
+        reservation?.status === 'confirmed' &&
+        reservation.payment?.status === 'succeeded'
+      ) {
+        return
+      }
+
+      attempts += 1
+      if (attempts >= 8) {
+        setPollTimedOut(true)
+        return
+      }
+      timer = window.setTimeout(poll, 2_000)
+    }
+
+    timer = window.setTimeout(poll, 1_200)
+    return () => {
+      cancelled = true
+      if (timer !== undefined) window.clearTimeout(timer)
+    }
+  }, [checkout, returnedReservationId, user, load])
+
+  const returnedReservation = useMemo(
+    () =>
+      rows.find((row) => row.reservation_id === returnedReservationId) ?? null,
+    [rows, returnedReservationId],
+  )
+
+  async function refresh() {
+    setRefreshing(true)
+    await load()
+    setRefreshing(false)
+  }
 
   async function login(event: FormEvent) {
     event.preventDefault()
@@ -79,7 +207,11 @@ function MyReservations() {
       password,
     })
     setAuthBusy(false)
-    if (loginError) setAuthError(loginError.message)
+    if (loginError) {
+      setAuthError(
+        friendlyError(loginError, 'That email and password did not match.'),
+      )
+    }
   }
 
   if (authLoading) return <PageSpinner />
@@ -125,7 +257,7 @@ function MyReservations() {
 
   return (
     <div className="min-h-screen bg-muted/30 px-4 py-10">
-      <div className="mx-auto max-w-3xl space-y-6">
+      <div className="mx-auto max-w-6xl space-y-6">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
             <h1 className="text-3xl font-semibold tracking-tight">
@@ -139,10 +271,21 @@ function MyReservations() {
             Sign out
           </Button>
         </div>
+
+        {checkout && (
+          <CheckoutNotice
+            checkout={checkout}
+            reservation={returnedReservation}
+            timedOut={pollTimedOut}
+            refreshing={refreshing}
+            onRefresh={refresh}
+          />
+        )}
+
         {error && <p className="text-sm text-destructive">{error}</p>}
         <Card>
           <CardContent>
-            {rows === null ? (
+            {!loaded ? (
               <p className="py-6 text-center text-muted-foreground">Loading…</p>
             ) : rows.length === 0 ? (
               <p className="py-6 text-center text-muted-foreground">
@@ -155,15 +298,20 @@ function MyReservations() {
                     <TableHead>Facility</TableHead>
                     <TableHead>Space</TableHead>
                     <TableHead>When</TableHead>
-                    <TableHead>Status</TableHead>
+                    <TableHead>Reservation</TableHead>
+                    <TableHead>Payment</TableHead>
                     <TableHead className="text-right">Total</TableHead>
-                    <TableHead>Manage</TableHead>
+                    <TableHead>Actions</TableHead>
                     <TableHead className="w-24" />
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {rows.map((row) => {
                     const { start, end } = parseTstzrange(row.during)
+                    const paymentSettled =
+                      row.payment?.status === 'succeeded' ||
+                      row.payment?.status === 'partially_refunded' ||
+                      row.payment?.status === 'refunded'
                     return (
                       <TableRow key={row.reservation_id}>
                         <TableCell className="font-medium">
@@ -189,24 +337,37 @@ function MyReservations() {
                                 : 'default'
                             }
                           >
-                            {row.status}
+                            {label(row.status)}
                           </Badge>
+                        </TableCell>
+                        <TableCell>
+                          <PaymentStatusBadge status={row.payment?.status ?? null} />
                         </TableCell>
                         <TableCell className="text-right">
                           {dollars(row.total_cents)} {row.currency}
                         </TableCell>
                         <TableCell>
-                          {start && end && (
-                            <ReservationActions
-                              reservationId={row.reservation_id}
-                              status={row.status}
-                              spaceId={row.space_id}
-                              startIso={start.toISOString()}
-                              endIso={end.toISOString()}
-                              isStaff={false}
-                              onDone={load}
-                            />
-                          )}
+                          <div className="flex flex-wrap gap-2">
+                            {row.status === 'pending' && !paymentSettled && (
+                              <PayNowButton reservationId={row.reservation_id} />
+                            )}
+                            {start && end && (
+                              <ReservationActions
+                                reservationId={row.reservation_id}
+                                status={row.status}
+                                spaceId={row.space_id}
+                                startIso={start.toISOString()}
+                                endIso={end.toISOString()}
+                                isStaff={false}
+                                allowExtend={
+                                  !row.payment || row.payment.status === 'failed'
+                                }
+                                onDone={() => {
+                                  void load()
+                                }}
+                              />
+                            )}
+                          </div>
                         </TableCell>
                         <TableCell>
                           <Button size="sm" variant="outline" asChild>
@@ -229,4 +390,81 @@ function MyReservations() {
       </div>
     </div>
   )
+}
+
+function CheckoutNotice({
+  checkout,
+  reservation,
+  timedOut,
+  refreshing,
+  onRefresh,
+}: {
+  checkout: 'success' | 'cancelled'
+  reservation: DisplayRow | null
+  timedOut: boolean
+  refreshing: boolean
+  onRefresh: () => void | Promise<void>
+}) {
+  if (checkout === 'cancelled') {
+    return (
+      <div className="flex items-start gap-3 rounded-lg border bg-card p-4 text-sm">
+        <XCircle className="mt-0.5 size-5 shrink-0 text-muted-foreground" />
+        <div>
+          <p className="font-medium">Checkout closed</p>
+          <p className="text-muted-foreground">
+            Your reservation is still pending. Pay whenever you’re ready.
+          </p>
+        </div>
+      </div>
+    )
+  }
+
+  const confirmed =
+    reservation?.status === 'confirmed' &&
+    reservation.payment?.status === 'succeeded'
+  const failed = reservation?.payment?.status === 'failed'
+
+  return (
+    <div className="flex flex-wrap items-start justify-between gap-4 rounded-lg border bg-card p-4 text-sm">
+      <div className="flex items-start gap-3">
+        {confirmed ? (
+          <CheckCircle2 className="mt-0.5 size-5 shrink-0 text-primary" />
+        ) : failed ? (
+          <XCircle className="mt-0.5 size-5 shrink-0 text-destructive" />
+        ) : (
+          <Clock3 className="mt-0.5 size-5 shrink-0 text-muted-foreground" />
+        )}
+        <div>
+          <p className="font-medium">
+            {confirmed
+              ? 'Payment confirmed'
+              : failed
+                ? 'Payment needs another try'
+                : timedOut
+                  ? 'Confirmation is still processing'
+                  : 'Payment received, confirming…'}
+          </p>
+          <p className="text-muted-foreground">
+            {confirmed
+              ? 'You’re all set. Your parking space is confirmed.'
+              : failed
+                ? 'Stripe could not complete that payment. Your reservation remains pending.'
+                : 'Stripe and ParkOS can take a moment to finish syncing.'}
+          </p>
+        </div>
+      </div>
+      {!confirmed && (
+        <Button variant="outline" disabled={refreshing} onClick={onRefresh}>
+          <RefreshCw data-icon="inline-start" />
+          {refreshing ? 'Refreshing…' : 'Refresh status'}
+        </Button>
+      )}
+    </div>
+  )
+}
+
+function label(value: string) {
+  return value
+    .replace(/_/g, ' ')
+    .replace(/\b\w/g, (character) => character.toUpperCase())
 }

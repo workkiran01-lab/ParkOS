@@ -6,7 +6,7 @@
 -- Depends on the dev seed (20260819040100); like the seed, dev-project only.
 
 -- ---------------------------------------------------------------------------
--- CHECK 0: the DDL actually landed — 14 RLS-enabled tables, 48 policies,
+-- CHECK 0: the DDL actually landed — 16 RLS-enabled tables, 50 policies,
 -- all authorization/bootstrap/lifecycle functions present and SECURITY DEFINER.
 -- ---------------------------------------------------------------------------
 do $$
@@ -16,18 +16,20 @@ begin
    where schemaname = 'public' and rowsecurity
      and tablename in ('organizations','profiles','memberships','facilities',
                        'zones','spaces','customers','vehicles','reservations',
-                       'permits','price_rules','space_holds','invites','audit_log');
-  if v <> 14 then
-    raise exception 'CHECK0 FAIL: expected 14 RLS-enabled tables, found %', v;
+                       'permits','price_rules','space_holds','invites','audit_log',
+                       'payments','processed_stripe_events');
+  if v <> 16 then
+    raise exception 'CHECK0 FAIL: expected 16 RLS-enabled tables, found %', v;
   end if;
 
   -- 36 through Week 4, +1 in Week 5 (space_holds_update for release-early),
   -- +1 in Week 6 (price_rules_update), +9 in Week 7 (customer self-service:
   -- customers x3, vehicles x3, reservations x2, space_holds insert x1),
-  -- +1 in Week 8 (audit_log_select).
+  -- +1 in Week 8 (audit_log_select), +2 in Week 9 (payments SELECT for
+  -- members and owners; processed_stripe_events intentionally has none).
   select count(*) into v from pg_policies where schemaname = 'public';
-  if v <> 48 then
-    raise exception 'CHECK0 FAIL: expected 48 policies, found %', v;
+  if v <> 50 then
+    raise exception 'CHECK0 FAIL: expected 50 policies, found %', v;
   end if;
 
   select count(*) into v
@@ -40,9 +42,10 @@ begin
                        'public_quote_reservation','public_ensure_customer',
                        'public_create_reservation',
                        'cancel_reservation','extend_reservation',
-                       'confirm_reservation','mark_no_shows','get_my_reservations')
-     and p.prosecdef;
-  if v <> 15 then
+                       'confirm_reservation','mark_no_shows','get_my_reservations',
+                       'process_stripe_event')
+      and p.prosecdef;
+  if v <> 16 then
     raise exception 'CHECK0 FAIL: helper functions missing or not SECURITY DEFINER (found %)', v;
   end if;
 
@@ -54,7 +57,82 @@ begin
   if v <> 1 then
     raise exception 'CHECK0 FAIL: is_own_customer missing or wrongly SECURITY DEFINER';
   end if;
-  raise notice 'CHECK0 PASS: 14 RLS tables, 48 policies, 15 SECURITY DEFINER functions';
+  raise notice 'CHECK0 PASS: 16 RLS tables, 50 policies, 16 SECURITY DEFINER functions';
+end $$;
+
+-- ---------------------------------------------------------------------------
+-- CHECK 0c: Week 9 payment grants/policies. Authenticated callers may SELECT
+-- rows allowed by RLS but have no INSERT/UPDATE/DELETE grant and no write
+-- policy (including an ALL policy). service_role has the DML grants used by
+-- checkout/webhook handlers. processed_stripe_events is service-role-only.
+-- ---------------------------------------------------------------------------
+do $$
+declare v int;
+begin
+  select count(*) into v
+    from pg_policies
+   where schemaname = 'public'
+     and tablename = 'payments'
+     and cmd in ('INSERT', 'UPDATE', 'DELETE', 'ALL');
+  if v <> 0 then
+    raise exception 'CHECK0c FAIL: payments has % write-capable policies', v;
+  end if;
+
+  select count(*) into v
+    from pg_policies
+   where schemaname = 'public'
+     and tablename = 'payments'
+     and cmd = 'SELECT';
+  if v <> 2 then
+    raise exception 'CHECK0c FAIL: payments has % SELECT policies, expected 2', v;
+  end if;
+
+  select count(*) into v
+    from pg_policies
+   where schemaname = 'public'
+     and tablename = 'processed_stripe_events';
+  if v <> 0 then
+    raise exception 'CHECK0c FAIL: processed_stripe_events unexpectedly has % policies', v;
+  end if;
+
+  if not has_table_privilege('authenticated', 'public.payments', 'SELECT') then
+    raise exception 'CHECK0c FAIL: authenticated lacks SELECT on payments';
+  end if;
+  if has_table_privilege('authenticated', 'public.payments', 'INSERT')
+     or has_table_privilege('authenticated', 'public.payments', 'UPDATE')
+     or has_table_privilege('authenticated', 'public.payments', 'DELETE') then
+    raise exception 'CHECK0c FAIL: authenticated has payment DML privileges';
+  end if;
+  if has_table_privilege('authenticated', 'public.processed_stripe_events', 'SELECT')
+     or has_table_privilege('authenticated', 'public.processed_stripe_events', 'INSERT')
+     or has_table_privilege('authenticated', 'public.processed_stripe_events', 'UPDATE')
+     or has_table_privilege('authenticated', 'public.processed_stripe_events', 'DELETE') then
+    raise exception 'CHECK0c FAIL: authenticated can access processed Stripe events';
+  end if;
+
+  if not has_table_privilege('service_role', 'public.payments', 'SELECT')
+     or not has_table_privilege('service_role', 'public.payments', 'INSERT')
+     or not has_table_privilege('service_role', 'public.payments', 'UPDATE')
+     or not has_table_privilege('service_role', 'public.processed_stripe_events', 'INSERT') then
+    raise exception 'CHECK0c FAIL: service_role lacks required Stripe table privileges';
+  end if;
+
+  if not has_function_privilege(
+    'service_role',
+    'public.process_stripe_event(text,text,uuid,uuid,text,text,integer,text,integer)',
+    'EXECUTE'
+  ) then
+    raise exception 'CHECK0c FAIL: service_role cannot execute process_stripe_event';
+  end if;
+  if has_function_privilege(
+    'authenticated',
+    'public.process_stripe_event(text,text,uuid,uuid,text,text,integer,text,integer)',
+    'EXECUTE'
+  ) then
+    raise exception 'CHECK0c FAIL: authenticated can execute process_stripe_event';
+  end if;
+
+  raise notice 'CHECK0c PASS: payment writes and Stripe event processing are service-role-only';
 end $$;
 
 -- ---------------------------------------------------------------------------
@@ -634,12 +712,251 @@ begin
   raise notice 'CHECK8 PASS: cross-customer cancel/extend denied; attendant override works; audit_log unforgeable';
 end $$;
 
+-- ---------------------------------------------------------------------------
+-- CHECK 9: payment row isolation, authenticated write lockdown, service-role
+-- webhook authorization, and atomic event idempotency. Two same-org customers
+-- each see only their own payment; an Org B member sees neither. The service
+-- role processes one completion twice, but only one event/audit row is written
+-- and the reservation is confirmed once. Synthetic rows are removed at end.
+-- ---------------------------------------------------------------------------
+do $$
+declare
+  v int;
+  v_role text := current_user;
+  c_user1 uuid := '00000000-0000-0000-0000-0000000000f1';
+  c_user2 uuid := '00000000-0000-0000-0000-0000000000f2';
+  org_a uuid := 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+  a1 uuid := '00000000-0000-0000-0000-0000000000a1';
+  b1 uuid := '00000000-0000-0000-0000-0000000000b1';
+  v_customer1 uuid;
+  v_customer2 uuid;
+  v_facility uuid;
+  v_space uuid;
+  v_reservation1 uuid;
+  v_reservation2 uuid;
+  v_payment1 uuid;
+  v_payment2 uuid;
+  v_result jsonb;
+  v_start timestamptz := date_trunc('hour', now()) + interval '600 days';
+begin
+  insert into auth.users
+    (instance_id, id, aud, role, email, encrypted_password,
+     email_confirmed_at, created_at, updated_at, raw_app_meta_data, raw_user_meta_data)
+  values
+    ('00000000-0000-0000-0000-000000000000', c_user1, 'authenticated', 'authenticated',
+     'rls-payment-f1@parkos.dev', 'x', now(), now(), now(), '{}', '{}'),
+    ('00000000-0000-0000-0000-000000000000', c_user2, 'authenticated', 'authenticated',
+     'rls-payment-f2@parkos.dev', 'x', now(), now(), now(), '{}', '{}')
+  on conflict (id) do nothing;
+
+  insert into public.customers (org_id, user_id, full_name)
+  values (org_a, c_user1, '__RLS_PAYMENT_F1__')
+  returning id into v_customer1;
+  insert into public.customers (org_id, user_id, full_name)
+  values (org_a, c_user2, '__RLS_PAYMENT_F2__')
+  returning id into v_customer2;
+
+  select s.id, z.facility_id into v_space, v_facility
+    from public.spaces s
+    join public.zones z on z.id = s.zone_id and z.org_id = s.org_id
+   where s.org_id = org_a
+     and s.archived_at is null
+     and z.archived_at is null
+   order by s.id
+   limit 1;
+
+  if v_space is null then
+    raise exception 'CHECK9 FAIL: no Org A space available for payment fixtures';
+  end if;
+
+  insert into public.reservations (
+    org_id, facility_id, space_id, customer_id, during, status,
+    price_breakdown, total_cents, currency
+  ) values (
+    org_a, v_facility, v_space, v_customer1,
+    tstzrange(v_start, v_start + interval '1 hour', '[)'), 'pending',
+    '{"line_items":[]}'::jsonb, 1000, 'USD'
+  ) returning id into v_reservation1;
+
+  insert into public.reservations (
+    org_id, facility_id, space_id, customer_id, during, status,
+    price_breakdown, total_cents, currency
+  ) values (
+    org_a, v_facility, v_space, v_customer2,
+    tstzrange(v_start + interval '2 hours', v_start + interval '3 hours', '[)'), 'pending',
+    '{"line_items":[]}'::jsonb, 1200, 'USD'
+  ) returning id into v_reservation2;
+
+  insert into public.payments (
+    org_id, reservation_id, stripe_checkout_session_id,
+    amount_cents, currency, status
+  ) values (
+    org_a, v_reservation1, 'cs_test_rls_payment_f1', 1000, 'USD', 'pending'
+  ) returning id into v_payment1;
+
+  insert into public.payments (
+    org_id, reservation_id, stripe_checkout_session_id,
+    amount_cents, currency, status
+  ) values (
+    org_a, v_reservation2, 'cs_test_rls_payment_f2', 1200, 'USD', 'pending'
+  ) returning id into v_payment2;
+
+  -- Customer 1 sees own payment only and cannot mutate it.
+  perform set_config('request.jwt.claims',
+    format('{"sub":"%s","role":"authenticated"}', c_user1), true);
+  perform set_config('request.jwt.claim.sub', c_user1::text, true);
+  execute 'set local role authenticated';
+
+  select count(*) into v from public.payments;
+  if v <> 1 then
+    raise exception 'CHECK9 FAIL: customer 1 sees % payments, expected own 1', v;
+  end if;
+  select count(*) into v from public.payments where id = v_payment2;
+  if v <> 0 then
+    raise exception 'CHECK9 FAIL: customer 1 can read customer 2 payment';
+  end if;
+
+  begin
+    update public.payments set status = 'succeeded' where id = v_payment1;
+    raise exception 'CHECK9 FAIL: authenticated customer updated a payment';
+  exception
+    when insufficient_privilege then null;
+  end;
+
+  begin
+    insert into public.payments (
+      org_id, reservation_id, stripe_checkout_session_id,
+      amount_cents, currency, status
+    ) values (
+      org_a, v_reservation1, 'cs_test_rls_forged_f1', 1000, 'USD', 'succeeded'
+    );
+    raise exception 'CHECK9 FAIL: authenticated customer inserted a payment';
+  exception
+    when insufficient_privilege then null;
+  end;
+
+  -- Customer 2 cannot see customer 1's payment.
+  execute format('set local role %I', v_role);
+  perform set_config('request.jwt.claims',
+    format('{"sub":"%s","role":"authenticated"}', c_user2), true);
+  perform set_config('request.jwt.claim.sub', c_user2::text, true);
+  execute 'set local role authenticated';
+
+  select count(*) into v from public.payments;
+  if v <> 1 then
+    raise exception 'CHECK9 FAIL: customer 2 sees % payments, expected own 1', v;
+  end if;
+  select count(*) into v from public.payments where id = v_payment1;
+  if v <> 0 then
+    raise exception 'CHECK9 FAIL: customer 2 can read customer 1 payment';
+  end if;
+
+  -- Org A staff sees both, while Org B staff sees neither.
+  execute format('set local role %I', v_role);
+  perform set_config('request.jwt.claims',
+    format('{"sub":"%s","role":"authenticated"}', a1), true);
+  perform set_config('request.jwt.claim.sub', a1::text, true);
+  execute 'set local role authenticated';
+  select count(*) into v from public.payments
+   where id in (v_payment1, v_payment2);
+  if v <> 2 then
+    raise exception 'CHECK9 FAIL: Org A admin sees % of 2 Org A payments', v;
+  end if;
+
+  execute format('set local role %I', v_role);
+  perform set_config('request.jwt.claims',
+    format('{"sub":"%s","role":"authenticated"}', b1), true);
+  perform set_config('request.jwt.claim.sub', b1::text, true);
+  execute 'set local role authenticated';
+  select count(*) into v from public.payments
+   where id in (v_payment1, v_payment2);
+  if v <> 0 then
+    raise exception 'CHECK9 FAIL: Org B admin sees % Org A payments', v;
+  end if;
+
+  -- Signed-webhook equivalent: service role applies completion and then the
+  -- same event again. The second call must be a clean no-op.
+  execute format('set local role %I', v_role);
+  perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
+  perform set_config('request.jwt.claim.sub', '', true);
+  execute 'set local role service_role';
+
+  v_result := public.process_stripe_event(
+    p_event_id => 'evt_test_rls_checkout_f1',
+    p_event_type => 'checkout.session.completed',
+    p_payment_id => v_payment1,
+    p_reservation_id => v_reservation1,
+    p_checkout_session_id => 'cs_test_rls_payment_f1',
+    p_payment_intent_id => 'pi_test_rls_payment_f1',
+    p_amount_cents => 1000,
+    p_currency => 'usd'
+  );
+  if coalesce((v_result ->> 'processed')::boolean, false) is not true
+     or v_result ->> 'outcome' <> 'payment_succeeded_reservation_confirmed' then
+    raise exception 'CHECK9 FAIL: first webhook result was %', v_result;
+  end if;
+
+  v_result := public.process_stripe_event(
+    p_event_id => 'evt_test_rls_checkout_f1',
+    p_event_type => 'checkout.session.completed',
+    p_payment_id => v_payment1,
+    p_reservation_id => v_reservation1,
+    p_checkout_session_id => 'cs_test_rls_payment_f1',
+    p_payment_intent_id => 'pi_test_rls_payment_f1',
+    p_amount_cents => 1000,
+    p_currency => 'usd'
+  );
+  if coalesce((v_result ->> 'processed')::boolean, true) is not false
+     or v_result ->> 'outcome' <> 'duplicate_event' then
+    raise exception 'CHECK9 FAIL: duplicate webhook result was %', v_result;
+  end if;
+
+  execute format('set local role %I', v_role);
+
+  select count(*) into v from public.processed_stripe_events
+   where event_id = 'evt_test_rls_checkout_f1' and org_id = org_a;
+  if v <> 1 then
+    raise exception 'CHECK9 FAIL: processed event count %, expected 1', v;
+  end if;
+  select count(*) into v from public.payments
+   where id = v_payment1
+     and status = 'succeeded'
+     and stripe_payment_intent_id = 'pi_test_rls_payment_f1';
+  if v <> 1 then
+    raise exception 'CHECK9 FAIL: webhook did not mark payment succeeded';
+  end if;
+  select count(*) into v from public.reservations
+   where id = v_reservation1 and status = 'confirmed';
+  if v <> 1 then
+    raise exception 'CHECK9 FAIL: webhook did not confirm reservation';
+  end if;
+  select count(*) into v from public.audit_log
+   where target_id = v_reservation1
+     and action = 'confirm_reservation'
+     and actor_id is null;
+  if v <> 1 then
+    raise exception 'CHECK9 FAIL: service confirmation audit count %, expected 1', v;
+  end if;
+
+  -- cleanup as postgres; children first
+  delete from public.processed_stripe_events
+   where event_id = 'evt_test_rls_checkout_f1';
+  delete from public.audit_log where target_id in (v_reservation1, v_reservation2);
+  delete from public.payments where id in (v_payment1, v_payment2);
+  delete from public.reservations where id in (v_reservation1, v_reservation2);
+  delete from public.customers where id in (v_customer1, v_customer2);
+  delete from auth.users where id in (c_user1, c_user2);
+
+  raise notice 'CHECK9 PASS: payments isolated/read-only; webhook service role is atomic and idempotent';
+end $$;
+
 -- The Management API suppresses RAISE NOTICE output. If every assertion above
 -- completes, return an explicit, machine-visible summary for CI/manual evidence.
 select check_name, result
 from (values
-  ('CHECK0',  'PASS: 14 RLS tables, 48 policies, 15 SECURITY DEFINER functions'),
+  ('CHECK0',  'PASS: 16 RLS tables, 50 policies, 16 SECURITY DEFINER functions'),
   ('CHECK0b', 'PASS: authenticated has S/I/U/D grants on all 13 RLS tables'),
+  ('CHECK0c', 'PASS: payment writes and Stripe event processing are service-role-only'),
   ('CHECK1',  'PASS: Org A sees exactly 2 facilities / 165 spaces, all Org A'),
   ('CHECK1b', 'PASS: Org B sees exactly 1 facility / 10 spaces, all Org B'),
   ('CHECK2',  'PASS: cross-org insert rejected by RLS with SQLSTATE 42501'),
@@ -648,6 +965,7 @@ from (values
   ('CHECK5',  'PASS: admin created invite; manager rejected by RLS'),
   ('CHECK6',  'PASS: facility RPC denies attendant; admin bootstrap atomic and org-scoped'),
   ('CHECK7',  'PASS: customer rows isolated; identity spoof rejected; availability tenant-clean'),
-  ('CHECK8',  'PASS: cross-customer cancel/extend denied; attendant override works; audit_log unforgeable')
+  ('CHECK8',  'PASS: cross-customer cancel/extend denied; attendant override works; audit_log unforgeable'),
+  ('CHECK9',  'PASS: payments isolated/read-only; webhook service role atomic and idempotent')
 ) as checks(check_name, result)
 order by check_name;

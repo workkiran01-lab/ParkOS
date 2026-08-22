@@ -41,6 +41,11 @@ data.
 
 All primary keys are `uuid` via `gen_random_uuid()`, not sequential integers.
 
+The narrow exception is an external-provider idempotency ledger whose natural key is the
+provider's immutable event identifier (for example, Stripe's `event_id` text value). The ledger
+still carries `org_id`; using the provider ID as its primary key makes duplicate delivery a
+database-enforced no-op.
+
 **Reasoning:** sequential IDs leak business volume and collide if environments are ever merged or
 seeded from each other.
 
@@ -56,6 +61,21 @@ archived_at timestamptz null
 instead of hard deletes.
 
 **Reasoning:** a deactivated staff member's name must still appear on old check-in records.
+
+### 6. Payments: Stripe-confirmed platform collection
+
+ParkOS v1 collects reservation payments into the platform Stripe account through hosted Stripe
+Checkout. Stripe Connect and operator payouts are later decisions, not implicit parts of this
+model.
+
+The initial pending payment attempt is created only by a trusted server function. After that,
+payment status changes only from signature-verified Stripe webhooks running with the service
+role; browser clients never insert or update payment state. Webhook event claiming and the
+corresponding payment/reservation transition happen in one database transaction so a retry can
+never be acknowledged before its state change commits.
+
+Payment records are financial history: clients cannot delete them, and application workflows do
+not archive or hard-delete them.
 
 ## Reference Operator
 

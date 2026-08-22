@@ -1,5 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { createFileRoute } from '@tanstack/react-router'
+import {
+  PaymentStatusBadge,
+  RefundPaymentButton,
+} from '@/components/payments/PaymentControls'
 import { ReservationActions } from '@/components/reservations/ReservationActions'
 import { Badge } from '@/components/ui/badge'
 import {
@@ -26,8 +30,13 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { useRole } from '@/hooks/useRole'
+import { friendlyError } from '@/lib/errors'
 import { dollars } from '@/lib/format'
 import { formatRange, parseTstzrange } from '@/lib/holds'
+import {
+  paymentsByReservation,
+  type PaymentSummary,
+} from '@/lib/payments'
 import { supabase } from '@/lib/supabase'
 import { Field } from '@/routes/login'
 
@@ -42,6 +51,7 @@ type Row = {
   space_number: string
   customer_name: string
   facility_name: string
+  payment: PaymentSummary | null
 }
 
 const ANY = 'all'
@@ -84,7 +94,12 @@ function StaffReservations() {
     ])
 
     if (resResult.error || facResult.error) {
-      setError(resResult.error?.message ?? facResult.error?.message ?? 'Load failed.')
+      setError(
+        friendlyError(
+          resResult.error ?? facResult.error,
+          'Reservations could not be loaded. Please try again.',
+        ),
+      )
       setLoading(false)
       return
     }
@@ -96,24 +111,43 @@ function StaffReservations() {
 
     const spaceIds = [...new Set(reservations.map((r) => r.space_id))]
     const customerIds = [...new Set(reservations.map((r) => r.customer_id))]
+    const reservationIds = reservations.map((reservation) => reservation.id)
 
-    const [spaceRes, custRes] = await Promise.all([
+    const [spaceRes, custRes, paymentRes] = await Promise.all([
       spaceIds.length
         ? supabase.from('spaces').select('id, space_number').in('id', spaceIds)
         : Promise.resolve({ data: [], error: null }),
       customerIds.length
         ? supabase.from('customers').select('id, full_name').in('id', customerIds)
         : Promise.resolve({ data: [], error: null }),
+      reservationIds.length
+        ? supabase
+            .from('payments')
+            .select(
+              'id, reservation_id, stripe_checkout_session_id, amount_cents, currency, status, created_at',
+            )
+            .eq('org_id', orgId)
+            .in('reservation_id', reservationIds)
+            .order('created_at', { ascending: false })
+        : Promise.resolve({ data: [], error: null }),
     ])
 
-    if (spaceRes.error || custRes.error) {
-      setError(spaceRes.error?.message ?? custRes.error?.message ?? 'Load failed.')
+    if (spaceRes.error || custRes.error || paymentRes.error) {
+      setError(
+        friendlyError(
+          spaceRes.error ?? custRes.error ?? paymentRes.error,
+          'Reservation details could not be loaded. Please try again.',
+        ),
+      )
       setLoading(false)
       return
     }
 
     const spaceNumber = new Map((spaceRes.data ?? []).map((s) => [s.id, s.space_number]))
     const customerName = new Map((custRes.data ?? []).map((c) => [c.id, c.full_name]))
+    const paymentByReservation = paymentsByReservation(
+      (paymentRes.data ?? []) as PaymentSummary[],
+    )
 
     setRows(
       reservations.map((r) => ({
@@ -127,6 +161,7 @@ function StaffReservations() {
         space_number: spaceNumber.get(r.space_id) ?? '—',
         customer_name: customerName.get(r.customer_id) ?? 'Unknown',
         facility_name: facilityName.get(r.facility_id) ?? 'Facility',
+        payment: paymentByReservation.get(r.id) ?? null,
       })),
     )
     setLoading(false)
@@ -164,7 +199,7 @@ function StaffReservations() {
       <div>
         <h1 className="text-3xl font-semibold tracking-tight">Reservations</h1>
         <p className="mt-1 text-muted-foreground">
-          Confirm, extend, or cancel bookings across your facilities.
+          Review payments, extend bookings, or cancel when plans change.
         </p>
       </div>
 
@@ -220,7 +255,8 @@ function StaffReservations() {
                     <TableHead>Facility</TableHead>
                     <TableHead>Space</TableHead>
                     <TableHead>When</TableHead>
-                    <TableHead>Status</TableHead>
+                    <TableHead>Reservation</TableHead>
+                    <TableHead>Payment</TableHead>
                     <TableHead className="text-right">Total</TableHead>
                     <TableHead>Actions</TableHead>
                   </TableRow>
@@ -246,24 +282,35 @@ function StaffReservations() {
                                 : 'default'
                             }
                           >
-                            {row.status}
+                            {label(row.status)}
                           </Badge>
+                        </TableCell>
+                        <TableCell>
+                          <PaymentStatusBadge status={row.payment?.status ?? null} />
                         </TableCell>
                         <TableCell className="text-right">
                           {dollars(row.total_cents)} {row.currency}
                         </TableCell>
                         <TableCell>
-                          {start && end && (
-                            <ReservationActions
-                              reservationId={row.id}
-                              status={row.status}
-                              spaceId={row.space_id}
-                              startIso={start.toISOString()}
-                              endIso={end.toISOString()}
-                              isStaff
-                              onDone={load}
-                            />
-                          )}
+                          <div className="flex flex-wrap gap-2">
+                            {start && end && (
+                              <ReservationActions
+                                reservationId={row.id}
+                                status={row.status}
+                                spaceId={row.space_id}
+                                startIso={start.toISOString()}
+                                endIso={end.toISOString()}
+                                isStaff
+                                allowExtend={
+                                  !row.payment || row.payment.status === 'failed'
+                                }
+                                onDone={load}
+                              />
+                            )}
+                            {(role === 'admin' || role === 'manager') && row.payment && (
+                              <RefundPaymentButton payment={row.payment} onDone={load} />
+                            )}
+                          </div>
                         </TableCell>
                       </TableRow>
                     )

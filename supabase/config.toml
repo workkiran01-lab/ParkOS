@@ -382,6 +382,18 @@ inspector_port = 8083
 # The Deno major version to use.
 deno_version = 2
 
+# Browser-invoked payment actions require a signed-in user JWT. Stripe cannot
+# send a Supabase JWT, so only its webhook bypasses the gateway check and
+# authenticates by verifying Stripe's signature over the raw request body.
+[functions.create-checkout-session]
+verify_jwt = true
+
+[functions.refund-payment]
+verify_jwt = true
+
+[functions.stripe-webhook]
+verify_jwt = false
+
 # [edge_runtime.secrets]
 # secret_key = "env(SECRET_VALUE)"
 
