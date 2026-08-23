@@ -42,6 +42,49 @@ rollback;
 
 
 -- -----------------------------------------------------------------------------
+-- CHECK 7 (Week 12) â€” permits are SELECT-only to browser clients, customers
+-- see only their own permit, and subscription event processing is service-only.
+-- The executable companion script additionally issues a real permit and proves
+-- its open-ended hold rejects an overlapping reservation before rolling back.
+-- -----------------------------------------------------------------------------
+do $$
+declare
+  v int;
+begin
+  if not has_table_privilege('authenticated', 'public.permits', 'SELECT')
+     or has_table_privilege('authenticated', 'public.permits', 'INSERT')
+     or has_table_privilege('authenticated', 'public.permits', 'UPDATE')
+     or has_table_privilege('authenticated', 'public.permits', 'DELETE') then
+    raise exception 'CHECK7 FAIL: permits must be SELECT-only for authenticated';
+  end if;
+
+  select count(*) into v from pg_policies
+   where schemaname = 'public' and tablename = 'permits'
+     and policyname = 'permits_select_own' and cmd = 'SELECT';
+  if v <> 1 then raise exception 'CHECK7 FAIL: own-permit SELECT policy missing'; end if;
+
+  if has_function_privilege(
+    'authenticated',
+    'public.process_stripe_subscription_event(text,text,uuid,text,text,timestamp with time zone,timestamp with time zone,text)',
+    'EXECUTE'
+  ) or not has_function_privilege(
+    'service_role',
+    'public.process_stripe_subscription_event(text,text,uuid,text,text,timestamp with time zone,timestamp with time zone,text)',
+    'EXECUTE'
+  ) then
+    raise exception 'CHECK7 FAIL: subscription webhook processor grants are unsafe';
+  end if;
+
+  raise notice 'CHECK7 PASS: permits are client-read-only and subscription processing is service-only';
+end $$;
+
+-- Run the full executable companion for synthetic customer/cross-org fixtures:
+-- supabase/dev-only/20260819050000_verify_rls_isolation.sql
+-- Its CHECK12 proves own/cross-customer visibility, cross-org isolation,
+-- customer issue denial, reservation overlap rejection, and hold release.
+
+
+-- -----------------------------------------------------------------------------
 -- CHECK 5 — payment isolation + write lockdown.
 -- Creates two same-org customer reservations/payments as postgres, then proves
 -- each customer sees exactly their own payment. The catalog assertions prove

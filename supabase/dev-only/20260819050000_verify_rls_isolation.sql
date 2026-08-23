@@ -27,10 +27,11 @@ begin
   -- customers x3, vehicles x3, reservations x2, space_holds insert x1),
   -- +1 in Week 8 (audit_log_select), +2 in Week 9 (payments SELECT for
   -- members and owners; processed_stripe_events intentionally has none),
-  -- +2 in Week 10 (vehicle_photos SELECT for members, INSERT for staff).
+  -- +2 in Week 10 (vehicle_photos SELECT for members, INSERT for staff),
+  -- +2 in Week 12 (permit own SELECT and staff UPDATE).
   select count(*) into v from pg_policies where schemaname = 'public';
-  if v <> 52 then
-    raise exception 'CHECK0 FAIL: expected 52 policies, found %', v;
+  if v <> 54 then
+    raise exception 'CHECK0 FAIL: expected 54 policies, found %', v;
   end if;
 
   select count(*) into v
@@ -45,9 +46,11 @@ begin
                        'cancel_reservation','extend_reservation',
                        'confirm_reservation','mark_no_shows','get_my_reservations',
                        'process_stripe_event',
-                       'check_in_reservation','check_in_walk_in','check_out_reservation')
+                       'check_in_reservation','check_in_walk_in','check_out_reservation',
+                       'issue_permit','cancel_permit','get_my_permits',
+                       'process_stripe_subscription_event')
       and p.prosecdef;
-  if v <> 19 then
+  if v <> 23 then
     raise exception 'CHECK0 FAIL: helper functions missing or not SECURITY DEFINER (found %)', v;
   end if;
 
@@ -59,7 +62,7 @@ begin
   if v <> 1 then
     raise exception 'CHECK0 FAIL: is_own_customer missing or wrongly SECURITY DEFINER';
   end if;
-  raise notice 'CHECK0 PASS: 17 RLS tables, 52 policies, 19 SECURITY DEFINER functions';
+  raise notice 'CHECK0 PASS: 17 RLS tables, 54 policies, 23 SECURITY DEFINER functions';
 end $$;
 
 -- ---------------------------------------------------------------------------
@@ -134,6 +137,18 @@ begin
     raise exception 'CHECK0c FAIL: authenticated can execute process_stripe_event';
   end if;
 
+  if not has_function_privilege(
+    'service_role',
+    'public.process_stripe_subscription_event(text,text,uuid,text,text,timestamp with time zone,timestamp with time zone,text)',
+    'EXECUTE'
+  ) or has_function_privilege(
+    'authenticated',
+    'public.process_stripe_subscription_event(text,text,uuid,text,text,timestamp with time zone,timestamp with time zone,text)',
+    'EXECUTE'
+  ) then
+    raise exception 'CHECK0c FAIL: Stripe subscription processor grants are unsafe';
+  end if;
+
   raise notice 'CHECK0c PASS: payment writes and Stripe event processing are service-role-only';
 end $$;
 
@@ -150,17 +165,23 @@ declare
 begin
   foreach t in array array['organizations','profiles','memberships','facilities',
                            'zones','spaces','customers','vehicles','reservations',
-                           'permits','price_rules','space_holds','invites'] loop
+                           'price_rules','space_holds','invites'] loop
     foreach p in array array['SELECT','INSERT','UPDATE','DELETE'] loop
       if not has_table_privilege('authenticated', 'public.' || t, p) then
         missing := missing || t || ':' || p || ' ';
       end if;
     end loop;
   end loop;
+  if not has_table_privilege('authenticated', 'public.permits', 'SELECT')
+     or has_table_privilege('authenticated', 'public.permits', 'INSERT')
+     or has_table_privilege('authenticated', 'public.permits', 'UPDATE')
+     or has_table_privilege('authenticated', 'public.permits', 'DELETE') then
+    missing := missing || 'permits:expected-SELECT-only ';
+  end if;
   if missing <> '' then
     raise exception 'CHECK0b FAIL: authenticated is missing grants: %', missing;
   end if;
-  raise notice 'CHECK0b PASS: authenticated holds S/I/U/D on all 13 tables';
+  raise notice 'CHECK0b PASS: authenticated holds S/I/U/D on 12 tables; permits is SELECT-only';
 end $$;
 
 -- ---------------------------------------------------------------------------
@@ -1099,12 +1120,143 @@ begin
   raise notice 'CHECK10 PASS: cross-org check-in/out denied; vehicle_photos + storage objects org-scoped';
 end $$;
 
+-- ---------------------------------------------------------------------------
+-- CHECK 12: monthly permit lifecycle, concurrency, and tenant/customer RLS.
+-- ---------------------------------------------------------------------------
+do $$
+declare
+  v int;
+  v_role text := current_user;
+  org_a uuid := 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+  a_admin uuid := '00000000-0000-0000-0000-0000000000a1';
+  b_admin uuid := '00000000-0000-0000-0000-0000000000b1';
+  c_user1 uuid := '00000000-0000-0000-0000-0000000000f1';
+  c_user2 uuid := '00000000-0000-0000-0000-0000000000f2';
+  v_customer1 uuid;
+  v_customer2 uuid;
+  v_facility uuid;
+  v_space uuid;
+  v_permit uuid;
+  v_start timestamptz := date_trunc('hour', now()) + interval '900 days';
+begin
+  begin
+    insert into auth.users
+      (instance_id, id, aud, role, email, encrypted_password,
+       email_confirmed_at, created_at, updated_at, raw_app_meta_data, raw_user_meta_data)
+    values
+      ('00000000-0000-0000-0000-000000000000', c_user1, 'authenticated', 'authenticated',
+       'rls-permit-f1@parkos.dev', 'x', now(), now(), now(), '{}', '{}'),
+      ('00000000-0000-0000-0000-000000000000', c_user2, 'authenticated', 'authenticated',
+       'rls-permit-f2@parkos.dev', 'x', now(), now(), now(), '{}', '{}')
+    on conflict (id) do nothing;
+
+    insert into public.customers (org_id, user_id, full_name)
+    values (org_a, c_user1, '__RLS12_OWNER__') returning id into v_customer1;
+    insert into public.customers (org_id, user_id, full_name)
+    values (org_a, c_user2, '__RLS12_OTHER__') returning id into v_customer2;
+
+    select z.facility_id, s.id into v_facility, v_space
+      from public.spaces s
+      join public.zones z on z.org_id = s.org_id and z.id = s.zone_id
+     where s.org_id = org_a and s.archived_at is null and z.archived_at is null
+       and not exists (
+         select 1 from public.space_holds h
+          where h.space_id = s.id and h.released_at is null
+            and h.during && tstzrange(v_start, null, '[)')
+       )
+     order by s.id limit 1;
+    if v_space is null then raise exception 'CHECK12 FAIL: no long-term test space'; end if;
+
+    -- A customer can read their eventual permit, but can never issue one.
+    perform set_config('request.jwt.claims',
+      format('{"sub":"%s","role":"authenticated"}', c_user1), true);
+    perform set_config('request.jwt.claim.sub', c_user1::text, true);
+    execute 'set local role authenticated';
+    begin
+      perform public.issue_permit(org_a, v_facility, v_space, v_customer1,
+                                  v_start, 15000, 'USD');
+      raise exception 'CHECK12 FAIL: customer issued a permit';
+    exception when sqlstate 'P0001' then
+      if sqlerrm <> 'ROLE_NOT_ALLOWED' then raise; end if;
+    end;
+
+    -- Admin issuance creates permit + open-ended hold atomically.
+    execute format('set local role %I', v_role);
+    perform set_config('request.jwt.claims',
+      format('{"sub":"%s","role":"authenticated"}', a_admin), true);
+    perform set_config('request.jwt.claim.sub', a_admin::text, true);
+    execute 'set local role authenticated';
+    select p.id into v_permit
+      from public.issue_permit(org_a, v_facility, v_space, v_customer1,
+                               v_start, 15000, 'USD') p;
+    select count(*) into v from public.space_holds
+     where permit_id = v_permit and hold_type = 'permit'
+       and released_at is null and upper_inf(during);
+    if v <> 1 then raise exception 'CHECK12 FAIL: issue did not create open permit hold'; end if;
+
+    -- The Week 3 reservation path must lose to the shared exclusion constraint.
+    begin
+      perform public.create_reservation(
+        v_space, v_customer1, null, v_start + interval '1 day', v_start + interval '1 day 1 hour'
+      );
+      raise exception 'CHECK12 FAIL: reservation overlapped active permit';
+    exception when sqlstate 'P0001' then
+      if sqlerrm <> 'SPACE_UNAVAILABLE' then raise; end if;
+    end;
+
+    -- Owner sees exactly their row; another customer in the same org sees none.
+    execute format('set local role %I', v_role);
+    perform set_config('request.jwt.claims',
+      format('{"sub":"%s","role":"authenticated"}', c_user1), true);
+    perform set_config('request.jwt.claim.sub', c_user1::text, true);
+    execute 'set local role authenticated';
+    select count(*) into v from public.permits where id = v_permit;
+    if v <> 1 then raise exception 'CHECK12 FAIL: owner cannot read own permit'; end if;
+
+    execute format('set local role %I', v_role);
+    perform set_config('request.jwt.claims',
+      format('{"sub":"%s","role":"authenticated"}', c_user2), true);
+    perform set_config('request.jwt.claim.sub', c_user2::text, true);
+    execute 'set local role authenticated';
+    select count(*) into v from public.permits where id = v_permit;
+    if v <> 0 then raise exception 'CHECK12 FAIL: customer read another customer permit'; end if;
+
+    -- An admin of another tenant also sees none.
+    execute format('set local role %I', v_role);
+    perform set_config('request.jwt.claims',
+      format('{"sub":"%s","role":"authenticated"}', b_admin), true);
+    perform set_config('request.jwt.claim.sub', b_admin::text, true);
+    execute 'set local role authenticated';
+    select count(*) into v from public.permits where id = v_permit;
+    if v <> 0 then raise exception 'CHECK12 FAIL: Org B admin read Org A permit'; end if;
+
+    -- Staff cancellation releases the same hold and records the lifecycle.
+    execute format('set local role %I', v_role);
+    perform set_config('request.jwt.claims',
+      format('{"sub":"%s","role":"authenticated"}', a_admin), true);
+    perform set_config('request.jwt.claim.sub', a_admin::text, true);
+    execute 'set local role authenticated';
+    perform public.cancel_permit(v_permit, 'CHECK12 cleanup cancellation');
+    select count(*) into v from public.space_holds
+     where permit_id = v_permit and released_at is null;
+    if v <> 0 then raise exception 'CHECK12 FAIL: cancelled permit still holds its space'; end if;
+
+    execute format('set local role %I', v_role);
+    raise exception using errcode = 'P0001', message = '__CHECK12_ROLLBACK_OK__';
+  exception when others then
+    execute format('set local role %I', v_role);
+    if sqlerrm <> '__CHECK12_ROLLBACK_OK__' then raise; end if;
+  end;
+
+  raise notice 'CHECK12 PASS: permit roles/RLS isolated; active permit blocks reservations; cancel releases hold';
+end $$;
+
 -- The Management API suppresses RAISE NOTICE output. If every assertion above
 -- completes, return an explicit, machine-visible summary for CI/manual evidence.
 select check_name, result
 from (values
-  ('CHECK0',  'PASS: 17 RLS tables, 52 policies, 19 SECURITY DEFINER functions'),
-  ('CHECK0b', 'PASS: authenticated has S/I/U/D grants on all 13 RLS tables'),
+  ('CHECK0',  'PASS: 17 RLS tables, 54 policies, 23 SECURITY DEFINER functions'),
+  ('CHECK0b', 'PASS: authenticated has normal DML grants; permits is SELECT-only'),
   ('CHECK0c', 'PASS: payment writes and Stripe event processing are service-role-only'),
   ('CHECK1',  'PASS: Org A sees exactly 2 facilities / 165 spaces, all Org A'),
   ('CHECK1b', 'PASS: Org B sees exactly 1 facility / 10 spaces, all Org B'),
@@ -1116,6 +1268,7 @@ from (values
   ('CHECK7',  'PASS: customer rows isolated; identity spoof rejected; availability tenant-clean'),
   ('CHECK8',  'PASS: cross-customer cancel/extend denied; attendant override works; audit_log unforgeable'),
   ('CHECK9',  'PASS: payments isolated/read-only; webhook service role atomic and idempotent'),
-  ('CHECK10', 'PASS: cross-org check-in/out denied; vehicle_photos + storage objects org-scoped')
+  ('CHECK10', 'PASS: cross-org check-in/out denied; vehicle_photos + storage objects org-scoped'),
+  ('CHECK12', 'PASS: permit roles/RLS isolated; active permit blocks reservations; cancel releases hold')
 ) as checks(check_name, result)
 order by check_name;

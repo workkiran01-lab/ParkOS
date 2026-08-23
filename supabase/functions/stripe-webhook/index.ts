@@ -31,6 +31,10 @@ const handledEventTypes = new Set([
   'payment_intent.payment_failed',
   'charge.failed',
   'charge.refunded',
+  'customer.subscription.created',
+  'customer.subscription.updated',
+  'customer.subscription.deleted',
+  'invoice.payment_failed',
 ])
 
 const cryptoProvider = StripeRuntime.createSubtleCryptoProvider()
@@ -63,6 +67,15 @@ Deno.serve(async (request) => {
 
     if (!handledEventTypes.has(event.type)) {
       return jsonResponse({ received: true, ignored: true }, 200, false)
+    }
+
+    if (
+      event.type === 'customer.subscription.created' ||
+      event.type === 'customer.subscription.updated' ||
+      event.type === 'customer.subscription.deleted' ||
+      event.type === 'invoice.payment_failed'
+    ) {
+      return await processSubscriptionEvent(event)
     }
 
     const normalized = normalizeEvent(event)
@@ -115,6 +128,71 @@ Deno.serve(async (request) => {
     )
   }
 })
+
+async function processSubscriptionEvent(event: Stripe.Event) {
+  let permitId: string | null
+  let subscriptionId: string | null
+  let stripeStatus: string | null = null
+  let periodStart: string | null = null
+  let periodEnd: string | null = null
+  let reason: string | null = null
+
+  if (event.type.startsWith('customer.subscription.')) {
+    const subscription = event.data.object as Stripe.Subscription
+    const item = subscription.items.data[0]
+    permitId = metadataUuid(subscription.metadata.permit_id)
+    subscriptionId = subscription.id
+    stripeStatus = subscription.status
+    periodStart = unixTimestamp(item?.current_period_start)
+    periodEnd = unixTimestamp(item?.current_period_end)
+    reason = subscription.cancellation_details?.comment ?? null
+  } else {
+    const invoice = event.data.object as unknown as Record<string, unknown>
+    const parent = objectOrNull(invoice.parent)
+    const details = objectOrNull(parent?.subscription_details)
+    subscriptionId = stripeObjectId(details?.subscription ?? invoice.subscription)
+    const metadata = objectOrNull(details?.metadata)
+    permitId = metadataUuid(
+      typeof metadata?.permit_id === 'string' ? metadata.permit_id : undefined,
+    )
+  }
+
+  if (!permitId && !subscriptionId) {
+    console.error('A subscription event had no ParkOS permit identifier.')
+    return errorResponse('Unsupported Stripe subscription payload.', 400, false)
+  }
+
+  const { data, error } = await getAdminClient().rpc(
+    'process_stripe_subscription_event',
+    {
+      p_event_id: event.id,
+      p_event_type: event.type,
+      p_permit_id: permitId,
+      p_stripe_subscription_id: subscriptionId,
+      p_stripe_status: stripeStatus,
+      p_period_start: periodStart,
+      p_period_end: periodEnd,
+      p_reason: reason,
+    },
+  )
+  if (error) {
+    console.error('Atomic Stripe subscription processing failed; Stripe should retry.')
+    return errorResponse(
+      'Subscription event processing is temporarily unavailable.',
+      500,
+      false,
+    )
+  }
+  const result = data && typeof data === 'object' ? data : null
+  return jsonResponse(
+    {
+      received: true,
+      processed: result && 'processed' in result ? result.processed === true : true,
+    },
+    200,
+    false,
+  )
+}
 
 function normalizeEvent(event: Stripe.Event): NormalizedStripeEvent | null {
   if (
@@ -179,4 +257,14 @@ function integerOrNull(value: number | null | undefined) {
 
 function currencyOrNull(value: string | null | undefined) {
   return value && /^[A-Za-z]{3}$/.test(value) ? value.toUpperCase() : null
+}
+
+function unixTimestamp(value: number | null | undefined) {
+  return Number.isInteger(value) ? new Date((value as number) * 1_000).toISOString() : null
+}
+
+function objectOrNull(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object'
+    ? (value as Record<string, unknown>)
+    : null
 }

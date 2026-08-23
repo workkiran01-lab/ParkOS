@@ -391,6 +391,9 @@ verify_jwt = true
 [functions.refund-payment]
 verify_jwt = true
 
+[functions.create-permit-subscription]
+verify_jwt = true
+
 [functions.stripe-webhook]
 verify_jwt = false
 

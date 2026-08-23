@@ -77,6 +77,23 @@ never be acknowledged before its state change commits.
 Payment records are financial history: clients cannot delete them, and application workflows do
 not archive or hard-delete them.
 
+### 7. Monthly permits: assigned spaces with Stripe subscriptions
+
+ParkOS v1 monthly permits are assigned to one concrete parking space. Issuing a permit creates
+one open-ended `space_holds` row, so permits and reservations compete through the same database
+exclusion constraint. Cancelling a permit releases that hold; suspending billing does not release
+it automatically because loss of access is an operator decision.
+
+Recurring billing uses Stripe Subscriptions in the platform account. Permit subscription IDs,
+billing periods, and Stripe-derived lifecycle changes are written only by signature-verified
+webhooks running with the service role. Staff may issue or cancel a permit through audited,
+transactional server functions, but browser clients cannot claim that Stripe created, renewed,
+failed, or cancelled a subscription.
+
+The initial subscription uses a permit-specific recurring Stripe Price and Stripe's hosted invoice
+payment page. Stripe Connect, pooled/unassigned permits, proration controls, and usage-based billing
+remain later decisions.
+
 ## Reference Operator
 
 The concrete case every ambiguous UX or schema decision gets checked against.
