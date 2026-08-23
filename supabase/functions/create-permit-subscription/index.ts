@@ -71,6 +71,17 @@ Deno.serve(async (request) => {
         message: 'Cancellation requested. Waiting for Stripe confirmation.',
       }, 202)
     }
+    if (action === 'payment_link') {
+      // Read-only: fetch the subscription's latest invoice so staff can hand the
+      // customer the hosted payment page. Never creates or modifies anything.
+      if (!permit.stripe_subscription_id)
+        return errorResponse('This permit has no Stripe subscription yet.', 409)
+      const subscription = await getStripeClient().subscriptions.retrieve(
+        permit.stripe_subscription_id,
+        { expand: ['latest_invoice'] },
+      )
+      return subscriptionResponse(subscription, true)
+    }
     if (action !== 'create') return errorResponse('Unsupported permit action.', 400)
     if (permit.status === 'cancelled')
       return errorResponse('A cancelled permit cannot start billing.', 409)

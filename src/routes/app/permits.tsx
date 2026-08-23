@@ -75,8 +75,30 @@ function Permits() {
   const [error, setError] = useState<string | null>(null)
   const [issuing, setIssuing] = useState(false)
   const [cancelTarget, setCancelTarget] = useState<PermitRow | null>(null)
+  const [linkBusyId, setLinkBusyId] = useState<string | null>(null)
 
   const allowed = role === 'admin' || role === 'manager'
+
+  // Suspended permits have an unpaid first invoice. Fetch its hosted Stripe
+  // payment page (read-only) so staff can hand the customer a working link.
+  async function getPaymentLink(permit: PermitRow) {
+    setLinkBusyId(permit.id)
+    const { data, error: linkError } = await supabase.functions.invoke<{
+      payment_url: string | null
+    }>('create-permit-subscription', {
+      body: { permit_id: permit.id, action: 'payment_link' },
+    })
+    setLinkBusyId(null)
+    if (linkError || !data?.payment_url) {
+      toast.error(
+        await edgeFunctionError(linkError, 'No payment link is available for this permit.'),
+      )
+      return
+    }
+    await navigator.clipboard?.writeText(data.payment_url).catch(() => {})
+    window.open(data.payment_url, '_blank', 'noopener')
+    toast.success('Payment link copied and opened')
+  }
 
   const load = useCallback(async () => {
     if (!orgId || !allowed) return
@@ -270,15 +292,27 @@ function Permits() {
                         {billingPeriod(row.current_period_start, row.current_period_end)}
                       </TableCell>
                       <TableCell className="text-right">
-                        {row.status !== 'cancelled' && (
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => setCancelTarget(row)}
-                          >
-                            Cancel
-                          </Button>
-                        )}
+                        <div className="flex justify-end gap-2">
+                          {row.status === 'suspended' && (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              disabled={linkBusyId === row.id}
+                              onClick={() => getPaymentLink(row)}
+                            >
+                              {linkBusyId === row.id ? 'Fetching…' : 'Get payment link'}
+                            </Button>
+                          )}
+                          {row.status !== 'cancelled' && (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => setCancelTarget(row)}
+                            >
+                              Cancel
+                            </Button>
+                          )}
+                        </div>
                       </TableCell>
                     </TableRow>
                   ))}
