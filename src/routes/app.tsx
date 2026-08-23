@@ -113,6 +113,9 @@ function AppLayout() {
                   <NavLink to="/app/facilities">Facilities</NavLink>
                 </li>
                 <li>
+                  <NavLink to="/app/permits">Permits</NavLink>
+                </li>
+                <li>
                   <NavLink to="/app/override">Override</NavLink>
                 </li>
               </>
@@ -153,6 +156,7 @@ function NavLink({
     | '/app/onboarding'
     | '/app/staff'
     | '/app/facilities'
+    | '/app/permits'
     | '/app/occupancy'
     | '/app/availability'
     | '/app/reservations'

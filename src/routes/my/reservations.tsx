@@ -54,6 +54,19 @@ type DisplayRow = ReservationRow & {
   payment: PaymentSummary | null
 }
 
+type PermitRow = {
+  permit_id: string
+  facility_name: string
+  space_number: string
+  starts_at: string
+  monthly_rate_cents: number
+  currency: string
+  status: string
+  current_period_start: string | null
+  current_period_end: string | null
+  cancelled_at: string | null
+}
+
 type ReservationSearch = {
   checkout?: 'success' | 'cancelled'
   reservation_id?: string
@@ -80,6 +93,7 @@ function MyReservations() {
   const { checkout, reservation_id: returnedReservationId } = Route.useSearch()
   const { user, loading: authLoading } = useAuth()
   const [rows, setRows] = useState<DisplayRow[]>([])
+  const [permits, setPermits] = useState<PermitRow[]>([])
   const [loaded, setLoaded] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [refreshing, setRefreshing] = useState(false)
@@ -141,9 +155,17 @@ function MyReservations() {
     return displayRows
   }, [])
 
+  const loadPermits = useCallback(async () => {
+    const { data, error: permitError } = await supabase.rpc('get_my_permits')
+    if (!permitError) setPermits((data ?? []) as PermitRow[])
+  }, [])
+
   useEffect(() => {
-    if (!authLoading && user) void Promise.resolve().then(load)
-  }, [authLoading, user, load])
+    if (!authLoading && user) {
+      void Promise.resolve().then(load)
+      void Promise.resolve().then(loadPermits)
+    }
+  }, [authLoading, user, load, loadPermits])
 
   useEffect(() => {
     if (checkout !== 'success' || !returnedReservationId || !user) return
@@ -283,6 +305,9 @@ function MyReservations() {
         )}
 
         {error && <p className="text-sm text-destructive">{error}</p>}
+
+        {permits.length > 0 && <PermitsSection permits={permits} />}
+
         <Card>
           <CardContent>
             {!loaded ? (
@@ -389,6 +414,67 @@ function MyReservations() {
         </Card>
       </div>
     </div>
+  )
+}
+
+function PermitsSection({ permits }: { permits: PermitRow[] }) {
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Monthly permits</CardTitle>
+        <CardDescription>
+          Your assigned parking spaces. To change or cancel a permit, contact the
+          operator — permits are staff-managed.
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Facility</TableHead>
+              <TableHead>Space</TableHead>
+              <TableHead className="text-right">Monthly</TableHead>
+              <TableHead>Status</TableHead>
+              <TableHead>Next billing</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {permits.map((permit) => (
+              <TableRow key={permit.permit_id}>
+                <TableCell className="font-medium">{permit.facility_name}</TableCell>
+                <TableCell className="tabular-nums">{permit.space_number}</TableCell>
+                <TableCell className="text-right tabular-nums">
+                  {dollars(permit.monthly_rate_cents)} {permit.currency}
+                </TableCell>
+                <TableCell>
+                  <Badge
+                    variant={
+                      permit.status === 'active'
+                        ? 'default'
+                        : permit.status === 'suspended'
+                          ? 'secondary'
+                          : 'outline'
+                    }
+                  >
+                    {label(permit.status)}
+                  </Badge>
+                </TableCell>
+                <TableCell className="text-muted-foreground">
+                  {permit.status === 'cancelled'
+                    ? '—'
+                    : permit.current_period_end
+                      ? new Date(permit.current_period_end).toLocaleDateString(
+                          undefined,
+                          { dateStyle: 'medium' },
+                        )
+                      : 'Awaiting first invoice'}
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </CardContent>
+    </Card>
   )
 }
 
