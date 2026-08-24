@@ -12,6 +12,7 @@ import {
   Stripe as StripeRuntime,
 } from '../_shared/stripe.ts'
 import { getAdminClient } from '../_shared/supabase.ts'
+import { issueReceiptForPayment } from '../_shared/receipt.ts'
 
 type NormalizedStripeEvent = {
   eventType: string
@@ -108,6 +109,28 @@ Deno.serve(async (request) => {
     }
 
     const result = data && typeof data === 'object' ? data : null
+
+    // A newly-succeeded reservation payment gets an itemized receipt. Best-effort
+    // and after the payment is committed: a receipt failure must not 500 (Stripe
+    // would retry the already-settled payment). issueReceiptForPayment is
+    // idempotent on payment_id, so this fires at most once per payment.
+    if (
+      normalized.eventType === 'checkout.session.completed' &&
+      result &&
+      (result as Record<string, unknown>).processed === true &&
+      (result as Record<string, unknown>).payment_status === 'succeeded'
+    ) {
+      const paymentId = (result as Record<string, unknown>).payment_id
+      const reservationId = (result as Record<string, unknown>).reservation_id
+      if (typeof paymentId === 'string' && typeof reservationId === 'string') {
+        try {
+          await issueReceiptForPayment(getAdminClient(), { paymentId, reservationId })
+        } catch {
+          console.error('Receipt generation failed after a succeeded payment.')
+        }
+      }
+    }
+
     return jsonResponse(
       {
         received: true,

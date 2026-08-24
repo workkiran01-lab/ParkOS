@@ -38,6 +38,9 @@ function AttendantSearch() {
       const matched = q
         ? all.filter(
             (r) =>
+              // `includes`, not `startsWith`, so an attendant can type the six
+              // significant characters and skip the shared "PKS-" prefix.
+              r.booking_code.toLowerCase().includes(q) ||
               r.id.toLowerCase().startsWith(q) ||
               (r.license_plate ?? '').toLowerCase().includes(q) ||
               r.customer_name.toLowerCase().includes(q) ||
@@ -74,7 +77,7 @@ function AttendantSearch() {
         <input
           autoFocus
           className={bigInput}
-          placeholder="License plate or reservation ID"
+          placeholder="Booking code, plate, or name"
           value={term}
           autoCapitalize="characters"
           onChange={(event) => setTerm(event.target.value)}
@@ -104,6 +107,9 @@ function AttendantSearch() {
             <div key={r.id} className="space-y-3 rounded-xl border bg-background p-4">
               <div className="space-y-1">
                 <p className="text-xl font-semibold">{r.customer_name}</p>
+                <p className="font-mono text-base text-muted-foreground">
+                  {r.booking_code}
+                </p>
                 <p className="text-base">
                   Space <span className="font-medium">{r.space_number}</span>
                   {r.zone_name ? ` · ${r.zone_name}` : ''}

@@ -5,6 +5,7 @@ import {
   PaymentStatusBadge,
   PayNowButton,
 } from '@/components/payments/PaymentControls'
+import { DownloadReceiptButton } from '@/components/reservations/DownloadReceiptButton'
 import { ReservationActions } from '@/components/reservations/ReservationActions'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -38,6 +39,7 @@ import { AuthPage, Field } from '@/routes/login'
 
 type ReservationRow = {
   reservation_id: string
+  booking_code: string
   facility_id: string
   facility_name: string
   space_id: string
@@ -341,8 +343,10 @@ function MyReservations() {
                       <TableRow key={row.reservation_id}>
                         <TableCell className="font-medium">
                           {row.facility_name}
+                          {/* The booking code replaces the truncated UUID here:
+                              it is the reference a customer actually quotes. */}
                           <p className="font-mono text-xs text-muted-foreground">
-                            {row.reservation_id.slice(0, 8)}
+                            {row.booking_code}
                           </p>
                         </TableCell>
                         <TableCell>
@@ -375,6 +379,11 @@ function MyReservations() {
                           <div className="flex flex-wrap gap-2">
                             {row.status === 'pending' && !paymentSettled && (
                               <PayNowButton reservationId={row.reservation_id} />
+                            )}
+                            {paymentSettled && (
+                              <DownloadReceiptButton
+                                reservationId={row.reservation_id}
+                              />
                             )}
                             {start && end && (
                               <ReservationActions

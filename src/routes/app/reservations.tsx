@@ -4,6 +4,7 @@ import {
   PaymentStatusBadge,
   RefundPaymentButton,
 } from '@/components/payments/PaymentControls'
+import { DownloadReceiptButton } from '@/components/reservations/DownloadReceiptButton'
 import { ReservationActions } from '@/components/reservations/ReservationActions'
 import { Badge } from '@/components/ui/badge'
 import {
@@ -42,6 +43,7 @@ import { Field } from '@/routes/login'
 
 type Row = {
   id: string
+  booking_code: string
   facility_id: string
   space_id: string
   during: string
@@ -81,7 +83,7 @@ function StaffReservations() {
       supabase
         .from('reservations')
         .select(
-          'id, facility_id, space_id, customer_id, during, status, total_cents, currency',
+          'id, booking_code, facility_id, space_id, customer_id, during, status, total_cents, currency',
         )
         .eq('org_id', orgId)
         .order('created_at', { ascending: false })
@@ -152,6 +154,7 @@ function StaffReservations() {
     setRows(
       reservations.map((r) => ({
         id: r.id,
+        booking_code: r.booking_code,
         facility_id: r.facility_id,
         space_id: r.space_id,
         during: r.during,
@@ -268,6 +271,9 @@ function StaffReservations() {
                       <TableRow key={row.id}>
                         <TableCell className="font-medium">
                           {row.customer_name}
+                          <p className="font-mono text-xs text-muted-foreground">
+                            {row.booking_code}
+                          </p>
                         </TableCell>
                         <TableCell>{row.facility_name}</TableCell>
                         <TableCell>{row.space_number}</TableCell>
@@ -306,6 +312,11 @@ function StaffReservations() {
                                 }
                                 onDone={load}
                               />
+                            )}
+                            {(row.payment?.status === 'succeeded' ||
+                              row.payment?.status === 'partially_refunded' ||
+                              row.payment?.status === 'refunded') && (
+                              <DownloadReceiptButton reservationId={row.id} />
                             )}
                             {(role === 'admin' || role === 'manager') && row.payment && (
                               <RefundPaymentButton payment={row.payment} onDone={load} />

@@ -2,6 +2,7 @@ import { supabase } from '@/lib/supabase'
 
 export type AttendantReservation = {
   id: string
+  booking_code: string
   space_id: string
   customer_id: string
   vehicle_id: string | null
@@ -18,6 +19,7 @@ export type AttendantReservation = {
 
 type RawReservation = {
   id: string
+  booking_code: string
   space_id: string
   customer_id: string
   vehicle_id: string | null
@@ -41,7 +43,7 @@ export async function loadFacilityReservations(
   const { data, error } = await supabase
     .from('reservations')
     .select(
-      'id, space_id, customer_id, vehicle_id, during, status, total_cents, currency, checked_in_at',
+      'id, booking_code, space_id, customer_id, vehicle_id, during, status, total_cents, currency, checked_in_at',
     )
     .eq('facility_id', facilityId)
     .in('status', statuses)
