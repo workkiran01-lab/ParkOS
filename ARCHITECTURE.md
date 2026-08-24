@@ -117,3 +117,27 @@ against this file before being added:
 - RFID
 - Gate hardware integration
 - Native mobile apps
+
+## Known gap: in-person payment collection
+
+Distinct from the list above. This was never a deliberate exclusion — it is an omission found
+during verification, and it needs a decision rather than a default.
+
+Walk-in and drive-up parking has no payment collection path today. Three structural blockers,
+each sufficient on its own:
+
+- `create-checkout-session` rejects any reservation whose status is not `pending`, while
+  `check_in_walk_in` moves a reservation from `pending` to `active` inside a single
+  transaction. A walk-in is therefore never observably payable through the existing Stripe
+  flow, even if the booth UI offered a button.
+- `payments.stripe_checkout_session_id` is `NOT NULL`, and the table has no `method` or
+  `collected_by` column. A cash or card-terminal payment cannot be recorded at all.
+- Decision #6 restricts payment-state writes to signature-verified Stripe webhooks. In-person
+  collection has no way to originate such a write.
+
+`check_out_reservation` computes `final_total_cents` (overstay included) and returns it, but
+nothing consumes that figure. Measured on parkos-dev: 8 of 8 historical walk-ins collected $0.
+
+Closing this means choosing a cash/card-at-booth flow and adding the payment method and schema
+columns to record it. Until then a gated, attended lot — Lot A of the reference operator above —
+cannot run on ParkOS in production.
