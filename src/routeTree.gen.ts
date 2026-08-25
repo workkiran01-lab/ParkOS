@@ -23,6 +23,7 @@ import { Route as AppOccupancyRouteImport } from './routes/app/occupancy'
 import { Route as AppOnboardingRouteImport } from './routes/app/onboarding'
 import { Route as AppOverrideRouteImport } from './routes/app/override'
 import { Route as AppPermitsRouteImport } from './routes/app/permits'
+import { Route as AppReportsRouteImport } from './routes/app/reports'
 import { Route as AppReservationsRouteImport } from './routes/app/reservations'
 import { Route as AppSetupRouteImport } from './routes/app/setup'
 import { Route as AppStaffRouteImport } from './routes/app/staff'
@@ -103,6 +104,11 @@ const AppPermitsRoute = AppPermitsRouteImport.update({
   path: '/permits',
   getParentRoute: () => AppRoute,
 } as any)
+const AppReportsRoute = AppReportsRouteImport.update({
+  id: '/reports',
+  path: '/reports',
+  getParentRoute: () => AppRoute,
+} as any)
 const AppReservationsRoute = AppReservationsRouteImport.update({
   id: '/reservations',
   path: '/reservations',
@@ -163,6 +169,7 @@ export interface FileRoutesByFullPath {
   '/app/onboarding': typeof AppOnboardingRoute
   '/app/override': typeof AppOverrideRoute
   '/app/permits': typeof AppPermitsRoute
+  '/app/reports': typeof AppReportsRoute
   '/app/reservations': typeof AppReservationsRoute
   '/app/setup': typeof AppSetupRoute
   '/app/staff': typeof AppStaffRoute
@@ -186,6 +193,7 @@ export interface FileRoutesByTo {
   '/app/onboarding': typeof AppOnboardingRoute
   '/app/override': typeof AppOverrideRoute
   '/app/permits': typeof AppPermitsRoute
+  '/app/reports': typeof AppReportsRoute
   '/app/reservations': typeof AppReservationsRoute
   '/app/setup': typeof AppSetupRoute
   '/app/staff': typeof AppStaffRoute
@@ -212,6 +220,7 @@ export interface FileRoutesById {
   '/app/onboarding': typeof AppOnboardingRoute
   '/app/override': typeof AppOverrideRoute
   '/app/permits': typeof AppPermitsRoute
+  '/app/reports': typeof AppReportsRoute
   '/app/reservations': typeof AppReservationsRoute
   '/app/setup': typeof AppSetupRoute
   '/app/staff': typeof AppStaffRoute
@@ -239,6 +248,7 @@ export interface FileRouteTypes {
     | '/app/onboarding'
     | '/app/override'
     | '/app/permits'
+    | '/app/reports'
     | '/app/reservations'
     | '/app/setup'
     | '/app/staff'
@@ -262,6 +272,7 @@ export interface FileRouteTypes {
     | '/app/onboarding'
     | '/app/override'
     | '/app/permits'
+    | '/app/reports'
     | '/app/reservations'
     | '/app/setup'
     | '/app/staff'
@@ -287,6 +298,7 @@ export interface FileRouteTypes {
     | '/app/onboarding'
     | '/app/override'
     | '/app/permits'
+    | '/app/reports'
     | '/app/reservations'
     | '/app/setup'
     | '/app/staff'
@@ -412,6 +424,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppPermitsRouteImport
       parentRoute: typeof AppRoute
     }
+    '/app/reports': {
+      id: '/app/reports'
+      path: '/reports'
+      fullPath: '/app/reports'
+      preLoaderRoute: typeof AppReportsRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/app/reservations': {
       id: '/app/reservations'
       path: '/reservations'
@@ -484,6 +503,7 @@ interface AppRouteChildren {
   AppOnboardingRoute: typeof AppOnboardingRoute
   AppOverrideRoute: typeof AppOverrideRoute
   AppPermitsRoute: typeof AppPermitsRoute
+  AppReportsRoute: typeof AppReportsRoute
   AppReservationsRoute: typeof AppReservationsRoute
   AppSetupRoute: typeof AppSetupRoute
   AppStaffRoute: typeof AppStaffRoute
@@ -498,6 +518,7 @@ const AppRouteChildren: AppRouteChildren = {
   AppOnboardingRoute: AppOnboardingRoute,
   AppOverrideRoute: AppOverrideRoute,
   AppPermitsRoute: AppPermitsRoute,
+  AppReportsRoute: AppReportsRoute,
   AppReservationsRoute: AppReservationsRoute,
   AppSetupRoute: AppSetupRoute,
   AppStaffRoute: AppStaffRoute,

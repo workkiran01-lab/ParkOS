@@ -141,3 +141,25 @@ nothing consumes that figure. Measured on parkos-dev: 8 of 8 historical walk-ins
 Closing this means choosing a cash/card-at-booth flow and adding the payment method and schema
 columns to record it. Until then a gated, attended lot — Lot A of the reference operator above —
 cannot run on ParkOS in production.
+
+## Known gap: permit subscription payments are not recorded
+
+Monthly permits bill successfully through Stripe, and ParkOS keeps no record of the money.
+
+- `payments.reservation_id` is `NOT NULL`, so a permit charge cannot be inserted into that table
+  at all.
+- The stripe-webhook's `handledEventTypes` set includes `invoice.payment_failed` but not
+  `invoice.payment_succeeded`. A failed permit charge is noticed; a successful one is dropped.
+
+There is no permit invoice or payment table anywhere. Permits carry a `stripe_subscription_id`,
+a `monthly_rate_cents`, and period bounds — an expectation of billing, never a record of it.
+On parkos-dev, 4 active permit subscriptions bill monthly with zero corresponding record.
+
+This is separate from the in-person collection gap above, and arguably more urgent. Walk-in
+payment is a path that was never built. Permit billing is a path that works, is actively selling,
+and generates real revenue that goes untracked — so the operator cannot reconcile, report on, or
+audit it. Any revenue report is understated by exactly the amount permits bring in.
+
+Closing it needs two things: handling `invoice.payment_succeeded` in the webhook, and somewhere to
+put the result — either a dedicated permit payments table or a relaxed `payments` schema that
+admits a row belonging to a permit rather than a reservation.

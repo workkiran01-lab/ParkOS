@@ -10,6 +10,11 @@ first — this file tracks work, not architecture.
   real scan 404s. Booking-code lookup itself works (confirmed via receipts); only the destination
   page is missing. Camera-based QR scanning at the booth is a separate, later feature — this is
   just the page the QR should land on.
+- **Permit subscription payments are not recorded.** Successful monthly charges are never written
+  anywhere — `invoice.payment_succeeded` is unhandled and `payments.reservation_id` is `NOT NULL`,
+  so there is nowhere to put the row. 4 live subscriptions currently bill with zero record, and
+  every revenue report is understated by that amount. See the known-gap section in
+  `ARCHITECTURE.md`. Arguably the most urgent item here: this is working, selling, untracked revenue.
 - **Booth-side payment collection UX.** Ties to the in-person payment gap documented in
   `ARCHITECTURE.md`. Intended flow: at check-in, staff sees what is owed and can either show the
   customer a QR/payment link to pay from their own phone, or collect cash/card directly at the
@@ -22,7 +27,16 @@ first — this file tracks work, not architecture.
   A real UX gap, not yet scoped.
 - **Multi-role login edge cases.** One auth user holding both a staff membership and a customer
   record has not been tested beyond the basic case. Worth a deliberate pass before launch.
-
+- **`/signup` has no invite awareness.** `create_organization_with_admin()` unconditionally makes
+  any fresh signup the admin of a brand-new org — it never checks the `invites` table for a
+  pending row matching the signer's email. So if an invited user ever lands on `/signup` instead
+  of the actual invite-acceptance link (more likely now, since invite email delivery is itself
+  deferred), they silently become admin of an unrelated new org, and the original invite sits
+  unaccepted forever with no warning to either party. Fixing this properly means `/signup`
+  checking `invites` by email before minting a new org — worth deciding whether to auto-redirect
+  to acceptance, or just block and inform. Separate from the invite-email deferral already listed
+  above; that gap is about delivery, this one is about connecting the two flows even once delivery
+  exists.
 - **`public_create_reservation` doesn't return `booking_code`.** The booking confirmation page
   reads it back via a second `get_my_reservations()` call, with a fallback to the raw reservation
   ID if that fails. Fixing properly means a DROP/CREATE cascade across `create_reservation` →

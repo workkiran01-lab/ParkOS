@@ -91,7 +91,9 @@ function AppLayout() {
             <li>
               <NavLink to="/app/onboarding">Onboarding</NavLink>
             </li>
-            {(role === 'admin' || role === 'manager' || role === 'attendant') && (
+            {(role === 'admin' ||
+              role === 'manager' ||
+              role === 'attendant') && (
               <>
                 <li>
                   <NavLink to="/attendant">Booth (check-in)</NavLink>
@@ -116,6 +118,9 @@ function AppLayout() {
                   <NavLink to="/app/permits">Permits</NavLink>
                 </li>
                 <li>
+                  <NavLink to="/app/reports">Reports</NavLink>
+                </li>
+                <li>
                   <NavLink to="/app/override">Override</NavLink>
                 </li>
               </>
@@ -128,7 +133,9 @@ function AppLayout() {
           </ul>
           <div className="space-y-2 border-t pt-4">
             {fullName && (
-              <p className="truncate text-xs text-muted-foreground">{fullName}</p>
+              <p className="truncate text-xs text-muted-foreground">
+                {fullName}
+              </p>
             )}
             {hasCustomerRecord && (
               <Button variant="ghost" className="w-full" asChild>
@@ -161,6 +168,7 @@ function NavLink({
     | '/app/availability'
     | '/app/reservations'
     | '/app/override'
+    | '/app/reports'
     | '/attendant'
   children: string
 }) {
