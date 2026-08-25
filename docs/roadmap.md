@@ -23,6 +23,13 @@ first — this file tracks work, not architecture.
 - **Multi-role login edge cases.** One auth user holding both a staff membership and a customer
   record has not been tested beyond the basic case. Worth a deliberate pass before launch.
 
+- **`public_create_reservation` doesn't return `booking_code`.** The booking confirmation page
+  reads it back via a second `get_my_reservations()` call, with a fallback to the raw reservation
+  ID if that fails. Fixing properly means a DROP/CREATE cascade across `create_reservation` →
+  `public_create_reservation` → `check_in_walk_in` for the return-type change (same pattern
+  already handled once for booking_code generation itself). Not done now — deliberately kept out
+  of a UI/design-pass task.
+
 ## Deferred to v2 (already in ARCHITECTURE.md)
 
 - Valet operations

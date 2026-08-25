@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import { createFileRoute, Link } from '@tanstack/react-router'
 import type { QuoteBreakdown } from '@/components/facility/PricingSection'
+import { TicketStub } from '@/components/reservations/TicketStub'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
@@ -59,6 +60,7 @@ type AvailableSpace = {
 
 type Confirmation = {
   reservation_id: string
+  booking_code: string | null
   total_cents: number
   price_breakdown: QuoteBreakdown
   space_number: string
@@ -344,8 +346,18 @@ function BookingPage() {
         price_breakdown: QuoteBreakdown
       }[]
     )[0]
+
+    // public_create_reservation returns no booking code, so read it back from
+    // the customer's own list. The stub prints the PKS- code, not the UUID:
+    // the code exists precisely so a customer can read it over the phone.
+    const { data: mine } = await supabase.rpc('get_my_reservations')
+    const booked = (
+      (mine ?? []) as { reservation_id: string; booking_code: string }[]
+    ).find((r) => r.reservation_id === row.reservation_id)
+
     setConfirmation({
       ...row,
+      booking_code: booked?.booking_code ?? null,
       space_number: space.space_number,
       start,
       end,
@@ -374,33 +386,33 @@ function BookingPage() {
       <Shell>
         <Card>
           <CardHeader>
-            <CardTitle>You’re booked! 🎉</CardTitle>
+            <CardTitle>You’re booked</CardTitle>
             <CardDescription>
-              {facility.name} — space {confirmation.space_number}
+              Show this code at the facility.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="space-y-1 text-sm">
-              <p>
+            {confirmation.booking_code ? (
+              <TicketStub
+                status="Confirmed"
+                code={confirmation.booking_code}
+                lines={[
+                  `${facility.name} · Space ${confirmation.space_number}`,
+                  `${new Date(confirmation.start).toLocaleString()} → ${new Date(
+                    confirmation.end,
+                  ).toLocaleString()}`,
+                ]}
+                amount={dollars(confirmation.total_cents)}
+              />
+            ) : (
+              // The code read-back failed. The reservation itself is fine, so
+              // fall back to the ID rather than implying something went wrong.
+              <p className="text-sm">
                 <span className="text-muted-foreground">Reservation:</span>{' '}
-                <span className="font-mono">{confirmation.reservation_id}</span>
+                <span className="font-data">{confirmation.reservation_id}</span>
               </p>
-              <p>
-                <span className="text-muted-foreground">When:</span>{' '}
-                {new Date(confirmation.start).toLocaleString()} →{' '}
-                {new Date(confirmation.end).toLocaleString()}
-              </p>
-              <p>
-                <span className="text-muted-foreground">Total:</span>{' '}
-                <span className="font-medium">
-                  {dollars(confirmation.total_cents)}
-                </span>
-              </p>
-            </div>
+            )}
             <BreakdownTable quote={confirmation.price_breakdown} />
-            <p className="text-sm text-muted-foreground">
-              Show this reservation ID at the facility. (QR code coming later.)
-            </p>
             <div className="flex gap-2">
               <Button onClick={() => setConfirmation(null)} variant="outline">
                 Book another

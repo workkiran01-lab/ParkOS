@@ -5,10 +5,12 @@
 @custom-variant dark (&:is(.dark *));
 
 @theme {
-  /* System font stack — no webfont. */
+  /* System stacks only: fast at the booth, even on a poor connection. */
   --font-sans:
     system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial,
     sans-serif;
+  --font-mono:
+    ui-monospace, 'SF Mono', 'Cascadia Code', Menlo, Consolas, monospace;
 
   /* Parking spot status tokens. Swap values here, never in components. */
   --color-status-available: var(--status-available);
@@ -63,39 +65,39 @@
 }
 
 :root {
-  /* Slate neutrals, blue primary (Tailwind blue-600). */
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.129 0.042 264.695);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.129 0.042 264.695);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.129 0.042 264.695);
-  --primary: oklch(0.546 0.245 262.881);
-  --primary-foreground: oklch(0.984 0.003 247.858);
-  --secondary: oklch(0.968 0.007 247.896);
-  --secondary-foreground: oklch(0.208 0.042 265.755);
-  --muted: oklch(0.968 0.007 247.896);
-  --muted-foreground: oklch(0.554 0.046 257.417);
-  --accent: oklch(0.968 0.007 247.896);
-  --accent-foreground: oklch(0.208 0.042 265.755);
-  --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.929 0.013 255.508);
-  --input: oklch(0.929 0.013 255.508);
-  --ring: oklch(0.546 0.245 262.881);
-  --chart-1: oklch(0.87 0 0);
-  --chart-2: oklch(0.556 0 0);
-  --chart-3: oklch(0.439 0 0);
-  --chart-4: oklch(0.371 0 0);
-  --chart-5: oklch(0.269 0 0);
-  --radius: 0.625rem;
-  --sidebar: oklch(0.984 0.003 247.858);
-  --sidebar-foreground: oklch(0.129 0.042 264.695);
-  --sidebar-primary: oklch(0.546 0.245 262.881);
-  --sidebar-primary-foreground: oklch(0.984 0.003 247.858);
-  --sidebar-accent: oklch(0.968 0.007 247.896);
-  --sidebar-accent-foreground: oklch(0.208 0.042 265.755);
-  --sidebar-border: oklch(0.929 0.013 255.508);
-  --sidebar-ring: oklch(0.546 0.245 262.881);
+  /* ParkOS chrome is monochrome. Color belongs to live space status only. */
+  --background: #fafaf8; /* Paper */
+  --foreground: #0b0b0c; /* Ink */
+  --card: #fafaf8;
+  --card-foreground: #0b0b0c;
+  --popover: #fafaf8;
+  --popover-foreground: #0b0b0c;
+  --primary: #0b0b0c;
+  --primary-foreground: #fafaf8;
+  --secondary: #e4e4e1; /* Fog */
+  --secondary-foreground: #0b0b0c;
+  --muted: #e4e4e1;
+  --muted-foreground: #8a8c90; /* Concrete */
+  --accent: #e4e4e1;
+  --accent-foreground: #0b0b0c;
+  --destructive: #0b0b0c;
+  --border: #e4e4e1;
+  --input: #e4e4e1;
+  --ring: #0b0b0c;
+  --chart-1: #0b0b0c;
+  --chart-2: #2a2b2d;
+  --chart-3: #8a8c90;
+  --chart-4: #e4e4e1;
+  --chart-5: #fafaf8;
+  --radius: 0.1875rem;
+  --sidebar: #2a2b2d; /* Asphalt */
+  --sidebar-foreground: #fafaf8;
+  --sidebar-primary: #fafaf8;
+  --sidebar-primary-foreground: #2a2b2d;
+  --sidebar-accent: #0b0b0c;
+  --sidebar-accent-foreground: #fafaf8;
+  --sidebar-border: #8a8c90;
+  --sidebar-ring: #fafaf8;
 
   /* Parking spot status: available=green-600, occupied=rose-600,
      reserved=amber-500, maintenance=gray-500. */
@@ -107,37 +109,37 @@
 }
 
 .dark {
-  --background: oklch(0.129 0.042 264.695);
-  --foreground: oklch(0.984 0.003 247.858);
-  --card: oklch(0.208 0.042 265.755);
-  --card-foreground: oklch(0.984 0.003 247.858);
-  --popover: oklch(0.208 0.042 265.755);
-  --popover-foreground: oklch(0.984 0.003 247.858);
-  --primary: oklch(0.623 0.214 259.815);
-  --primary-foreground: oklch(0.984 0.003 247.858);
-  --secondary: oklch(0.279 0.041 260.031);
-  --secondary-foreground: oklch(0.984 0.003 247.858);
-  --muted: oklch(0.279 0.041 260.031);
-  --muted-foreground: oklch(0.704 0.04 256.788);
-  --accent: oklch(0.279 0.041 260.031);
-  --accent-foreground: oklch(0.984 0.003 247.858);
-  --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.623 0.214 259.815);
-  --chart-1: oklch(0.87 0 0);
-  --chart-2: oklch(0.556 0 0);
-  --chart-3: oklch(0.439 0 0);
-  --chart-4: oklch(0.371 0 0);
-  --chart-5: oklch(0.269 0 0);
-  --sidebar: oklch(0.208 0.042 265.755);
-  --sidebar-foreground: oklch(0.984 0.003 247.858);
-  --sidebar-primary: oklch(0.623 0.214 259.815);
-  --sidebar-primary-foreground: oklch(0.984 0.003 247.858);
-  --sidebar-accent: oklch(0.279 0.041 260.031);
-  --sidebar-accent-foreground: oklch(0.984 0.003 247.858);
-  --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.623 0.214 259.815);
+  --background: #0b0b0c;
+  --foreground: #fafaf8;
+  --card: #2a2b2d;
+  --card-foreground: #fafaf8;
+  --popover: #2a2b2d;
+  --popover-foreground: #fafaf8;
+  --primary: #fafaf8;
+  --primary-foreground: #0b0b0c;
+  --secondary: #2a2b2d;
+  --secondary-foreground: #fafaf8;
+  --muted: #2a2b2d;
+  --muted-foreground: #8a8c90;
+  --accent: #2a2b2d;
+  --accent-foreground: #fafaf8;
+  --destructive: #fafaf8;
+  --border: #8a8c90;
+  --input: #8a8c90;
+  --ring: #fafaf8;
+  --chart-1: #fafaf8;
+  --chart-2: #e4e4e1;
+  --chart-3: #8a8c90;
+  --chart-4: #2a2b2d;
+  --chart-5: #0b0b0c;
+  --sidebar: #2a2b2d;
+  --sidebar-foreground: #fafaf8;
+  --sidebar-primary: #fafaf8;
+  --sidebar-primary-foreground: #2a2b2d;
+  --sidebar-accent: #0b0b0c;
+  --sidebar-accent-foreground: #fafaf8;
+  --sidebar-border: #8a8c90;
+  --sidebar-ring: #fafaf8;
 
   --status-available: oklch(0.723 0.219 149.579);
   --status-occupied: oklch(0.645 0.246 16.439);
@@ -155,5 +157,39 @@
   }
   html {
     @apply font-sans;
+  }
+
+  ::selection {
+    background: var(--foreground);
+    color: var(--background);
+  }
+
+  [data-sonner-toaster] {
+    --border-radius: 0px !important;
+  }
+
+  [data-sonner-toast][data-styled='true'] {
+    background: var(--background) !important;
+    border-color: var(--border) !important;
+    box-shadow: 3px 3px 0 var(--foreground) !important;
+    color: var(--foreground) !important;
+  }
+}
+
+@layer utilities {
+  /* Operational values read like garage signage and line up in dense views. */
+  .font-data,
+  .tabular-nums {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums slashed-zero;
+    letter-spacing: -0.015em;
+  }
+
+  .signage-label {
+    color: var(--muted-foreground);
+    font-size: 0.6875rem;
+    font-weight: 600;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
   }
 }

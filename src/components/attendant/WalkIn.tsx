@@ -163,7 +163,7 @@ export function WalkIn({
     return (
       <div className="space-y-4 rounded-xl border bg-background p-4">
         <div>
-          <p className="text-lg font-semibold">Checked in ✓</p>
+          <p className="text-lg font-semibold">Checked in</p>
           <p className="text-base text-muted-foreground">
             {chosen?.label} — {dollars(doneTotal ?? 0)} estimated
           </p>

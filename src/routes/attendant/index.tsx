@@ -92,7 +92,7 @@ function AttendantSearch() {
       {checkedIn && (
         <div className="space-y-4 rounded-xl border bg-background p-4">
           <div>
-            <p className="text-lg font-semibold">Checked in ✓</p>
+            <p className="text-lg font-semibold">Checked in</p>
             <p className="text-base text-muted-foreground">
               {checkedIn.customer_name} — space {checkedIn.space_number}
             </p>

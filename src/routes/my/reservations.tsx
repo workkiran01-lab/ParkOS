@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react'
 import { createFileRoute, Link } from '@tanstack/react-router'
-import { CheckCircle2, Clock3, RefreshCw, XCircle } from 'lucide-react'
+import { Clock3, RefreshCw, XCircle } from 'lucide-react'
 import {
   PaymentStatusBadge,
   PayNowButton,
 } from '@/components/payments/PaymentControls'
 import { DownloadReceiptButton } from '@/components/reservations/DownloadReceiptButton'
 import { ReservationActions } from '@/components/reservations/ReservationActions'
+import { TicketStub } from '@/components/reservations/TicketStub'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
@@ -519,41 +520,50 @@ function CheckoutNotice({
     reservation.payment?.status === 'succeeded'
   const failed = reservation?.payment?.status === 'failed'
 
+  // Settled and paid is the moment the booking becomes final, so it gets the
+  // stub. The pending and failed states are still in flight: they stay a plain
+  // notice, which is what keeps the stub meaningful.
+  if (confirmed && reservation) {
+    return (
+      <TicketStub
+        status="Paid"
+        code={reservation.booking_code}
+        lines={[
+          `${reservation.facility_name} · Space ${reservation.space_number}`,
+          formatRange(reservation.during),
+        ]}
+        amount={dollars(reservation.total_cents)}
+      />
+    )
+  }
+
   return (
     <div className="flex flex-wrap items-start justify-between gap-4 rounded-lg border bg-card p-4 text-sm">
       <div className="flex items-start gap-3">
-        {confirmed ? (
-          <CheckCircle2 className="mt-0.5 size-5 shrink-0 text-primary" />
-        ) : failed ? (
+        {failed ? (
           <XCircle className="mt-0.5 size-5 shrink-0 text-destructive" />
         ) : (
           <Clock3 className="mt-0.5 size-5 shrink-0 text-muted-foreground" />
         )}
         <div>
           <p className="font-medium">
-            {confirmed
-              ? 'Payment confirmed'
-              : failed
-                ? 'Payment needs another try'
-                : timedOut
-                  ? 'Confirmation is still processing'
-                  : 'Payment received, confirming…'}
+            {failed
+              ? 'Payment needs another try'
+              : timedOut
+                ? 'Confirmation is still processing'
+                : 'Payment received, confirming…'}
           </p>
           <p className="text-muted-foreground">
-            {confirmed
-              ? 'You’re all set. Your parking space is confirmed.'
-              : failed
-                ? 'Stripe could not complete that payment. Your reservation remains pending.'
-                : 'Stripe and ParkOS can take a moment to finish syncing.'}
+            {failed
+              ? 'Stripe could not complete that payment. Your reservation remains pending.'
+              : 'Stripe and ParkOS can take a moment to finish syncing.'}
           </p>
         </div>
       </div>
-      {!confirmed && (
-        <Button variant="outline" disabled={refreshing} onClick={onRefresh}>
-          <RefreshCw data-icon="inline-start" />
-          {refreshing ? 'Refreshing…' : 'Refresh status'}
-        </Button>
-      )}
+      <Button variant="outline" disabled={refreshing} onClick={onRefresh}>
+        <RefreshCw data-icon="inline-start" />
+        {refreshing ? 'Refreshing…' : 'Refresh status'}
+      </Button>
     </div>
   )
 }
