@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import {
   createFileRoute,
   Link,
@@ -6,11 +6,27 @@ import {
   redirect,
   useNavigate,
 } from '@tanstack/react-router'
+import {
+  BarChart3,
+  CalendarDays,
+  Gauge,
+  LayoutDashboard,
+  ParkingSquare,
+  SlidersHorizontal,
+  Sparkles,
+  SquareParking,
+  TicketCheck,
+  UserCog,
+  Warehouse,
+  type LucideIcon,
+} from 'lucide-react'
 import { AppShell } from '@/components/layout/AppShell'
-import { Button } from '@/components/ui/button'
+import { DashboardConnectionProvider } from '@/hooks/useDashboardConnection'
+import { FacilityProvider, type FacilityOption } from '@/hooks/useFacility'
 import { useAuth } from '@/hooks/useAuth'
 import { useRole } from '@/hooks/useRole'
 import { supabase } from '@/lib/supabase'
+import { cn } from '@/lib/utils'
 
 export const Route = createFileRoute('/app')({
   beforeLoad: async ({ location }) => {
@@ -18,23 +34,13 @@ export const Route = createFileRoute('/app')({
       data: { session },
     } = await supabase.auth.getSession()
     if (!session) throw redirect({ to: '/login' })
-
-    // A session without a profile means organization creation never completed
-    // (e.g. the signup RPC failed after auth succeeded). Send those users to
-    // the recovery route instead of rendering the app with no role. On a query
-    // error we let the page render and surface it rather than misclassifying.
     const { data: profile, error } = await supabase
       .from('profiles')
       .select('id')
       .eq('id', session.user.id)
       .maybeSingle()
-
     const onSetup = location.pathname.startsWith('/app/setup')
     if (!error && !profile && !onSetup) {
-      // A profile-less session is either a staff user whose org creation
-      // failed, or a customer who only ever booked (customers row, no
-      // membership). Send customers to their bookings instead of offering
-      // org creation, which is the staff-only recovery path.
       const { data: customer } = await supabase
         .from('customers')
         .select('id')
@@ -51,135 +57,218 @@ export const Route = createFileRoute('/app')({
 function AppLayout() {
   const navigate = useNavigate()
   const { user } = useAuth()
-  const { role, full_name: fullName } = useRole()
-  // A staff user who has also booked as a customer (a customers row linked to
-  // this login) gets a persistent link to their own bookings, so they never
-  // have to switch accounts. Staff who never booked don't see it.
+  const { role, org_id: orgId, full_name: fullName } = useRole()
   const [hasCustomerRecord, setHasCustomerRecord] = useState(false)
+  const [facilities, setFacilities] = useState<FacilityOption[]>([])
+  const [facilityId, setFacilityId] = useState('')
+  const [facilitiesLoading, setFacilitiesLoading] = useState(true)
 
-  const loadCustomerRecord = useCallback(async () => {
-    if (!user) {
-      setHasCustomerRecord(false)
-      return
-    }
-    const { data } = await supabase
-      .from('customers')
-      .select('id')
-      .eq('user_id', user.id)
-      .limit(1)
-      .maybeSingle()
-    setHasCustomerRecord(!!data)
-  }, [user])
+  const loadShellData = useCallback(async () => {
+    if (!user || !orgId) return
+    const [customerResult, facilityResult] = await Promise.all([
+      supabase
+        .from('customers')
+        .select('id')
+        .eq('user_id', user.id)
+        .limit(1)
+        .maybeSingle(),
+      supabase
+        .from('facilities')
+        .select('id, name')
+        .eq('org_id', orgId)
+        .is('archived_at', null)
+        .order('name'),
+    ])
+    setHasCustomerRecord(!!customerResult.data)
+    const rows = (facilityResult.data ?? []) as FacilityOption[]
+    setFacilities(rows)
+    setFacilityId((current) => current || rows[0]?.id || '')
+    setFacilitiesLoading(false)
+  }, [orgId, user])
 
   useEffect(() => {
-    void Promise.resolve().then(loadCustomerRecord)
-  }, [loadCustomerRecord])
-
+    void Promise.resolve().then(loadShellData)
+  }, [loadShellData])
   async function signOut() {
     await supabase.auth.signOut()
     await navigate({ to: '/login' })
   }
+  const operations =
+    role === 'admin' || role === 'manager' || role === 'attendant'
+  const management = role === 'admin' || role === 'manager'
 
   return (
-    <AppShell
-      sidebar={
-        <div className="flex h-full flex-col justify-between gap-8">
-          <ul className="space-y-1 text-sm">
-            <li>
-              <NavLink to="/app">Dashboard</NavLink>
-            </li>
-            <li>
-              <NavLink to="/app/onboarding">Onboarding</NavLink>
-            </li>
-            {(role === 'admin' ||
-              role === 'manager' ||
-              role === 'attendant') && (
-              <>
-                <li>
-                  <NavLink to="/attendant">Booth (check-in)</NavLink>
-                </li>
-                <li>
-                  <NavLink to="/app/occupancy">Occupancy</NavLink>
-                </li>
-                <li>
-                  <NavLink to="/app/availability">Availability</NavLink>
-                </li>
-                <li>
-                  <NavLink to="/app/reservations">Reservations</NavLink>
-                </li>
-              </>
-            )}
-            {(role === 'admin' || role === 'manager') && (
-              <>
-                <li>
-                  <NavLink to="/app/facilities">Facilities</NavLink>
-                </li>
-                <li>
-                  <NavLink to="/app/permits">Permits</NavLink>
-                </li>
-                <li>
-                  <NavLink to="/app/reports">Reports</NavLink>
-                </li>
-                <li>
-                  <NavLink to="/app/override">Override</NavLink>
-                </li>
-              </>
-            )}
-            {role === 'admin' && (
-              <li>
-                <NavLink to="/app/staff">Staff</NavLink>
-              </li>
-            )}
-          </ul>
-          <div className="space-y-2 border-t pt-4">
-            {fullName && (
-              <p className="truncate text-xs text-muted-foreground">
-                {fullName}
-              </p>
-            )}
-            {hasCustomerRecord && (
-              <Button variant="ghost" className="w-full" asChild>
-                <Link to="/my/reservations">My reservations</Link>
-              </Button>
-            )}
-            <Button variant="outline" className="w-full" onClick={signOut}>
-              Sign out
-            </Button>
-          </div>
-        </div>
-      }
+    <FacilityProvider
+      value={{
+        facilities,
+        facilityId,
+        setFacilityId,
+        loading: facilitiesLoading,
+      }}
     >
-      <Outlet />
-    </AppShell>
+      <DashboardConnectionProvider>
+        <AppShell
+          facilities={facilities}
+          facilityId={facilityId}
+          onFacilityChange={setFacilityId}
+          fullName={fullName}
+          roleLabel={role?.replace('_', ' ') ?? 'Staff'}
+          hasCustomerRecord={hasCustomerRecord}
+          onSignOut={signOut}
+          sidebar={(collapsed) => (
+          <div className="space-y-6">
+            <NavGroup label="Overview" collapsed={collapsed}>
+              <NavItem
+                to="/app"
+                label="Dashboard"
+                icon={LayoutDashboard}
+                collapsed={collapsed}
+              />
+            </NavGroup>
+            {operations && (
+              <NavGroup label="Operations" collapsed={collapsed}>
+                <NavItem
+                  to="/attendant"
+                  label="Booth"
+                  icon={SquareParking}
+                  collapsed={collapsed}
+                />
+                <NavItem
+                  to="/app/occupancy"
+                  label="Occupancy"
+                  icon={Gauge}
+                  collapsed={collapsed}
+                />
+                <NavItem
+                  to="/app/availability"
+                  label="Availability"
+                  icon={ParkingSquare}
+                  collapsed={collapsed}
+                />
+                <NavItem
+                  to="/app/reservations"
+                  label="Reservations"
+                  icon={CalendarDays}
+                  collapsed={collapsed}
+                />
+              </NavGroup>
+            )}
+            {management && (
+              <NavGroup label="Management" collapsed={collapsed}>
+                <NavItem
+                  to="/app/facilities"
+                  label="Facilities"
+                  icon={Warehouse}
+                  collapsed={collapsed}
+                />
+                <NavItem
+                  to="/app/permits"
+                  label="Permits"
+                  icon={TicketCheck}
+                  collapsed={collapsed}
+                />
+                <NavItem
+                  to="/app/override"
+                  label="Override"
+                  icon={SlidersHorizontal}
+                  collapsed={collapsed}
+                />
+                {role === 'admin' && (
+                  <NavItem
+                    to="/app/staff"
+                    label="Staff"
+                    icon={UserCog}
+                    collapsed={collapsed}
+                  />
+                )}
+              </NavGroup>
+            )}
+            {management && (
+              <NavGroup label="Insights" collapsed={collapsed}>
+                <NavItem
+                  to="/app/reports"
+                  label="Reports"
+                  icon={BarChart3}
+                  collapsed={collapsed}
+                />
+              </NavGroup>
+            )}
+            {!facilitiesLoading && facilities.length === 0 && (
+              <NavGroup label="Setup" collapsed={collapsed}>
+                <NavItem
+                  to="/app/onboarding"
+                  label="Onboarding"
+                  icon={Sparkles}
+                  collapsed={collapsed}
+                />
+              </NavGroup>
+            )}
+          </div>
+          )}
+        >
+          <Outlet />
+        </AppShell>
+      </DashboardConnectionProvider>
+    </FacilityProvider>
   )
 }
 
-function NavLink({
-  to,
+function NavGroup({
+  label,
+  collapsed,
   children,
 }: {
-  to:
-    | '/app'
-    | '/app/onboarding'
-    | '/app/staff'
-    | '/app/facilities'
-    | '/app/permits'
-    | '/app/occupancy'
-    | '/app/availability'
-    | '/app/reservations'
-    | '/app/override'
-    | '/app/reports'
-    | '/attendant'
-  children: string
+  label: string
+  collapsed: boolean
+  children: ReactNode
+}) {
+  return (
+    <section>
+      {collapsed ? (
+        <div className="mx-auto mb-2 h-px w-5 bg-white/10" />
+      ) : (
+        <p className="mb-2 px-3 text-[9px] font-semibold uppercase tracking-[0.18em] text-sidebar-muted/70">
+          {label}
+        </p>
+      )}
+      <div className="space-y-1">{children}</div>
+    </section>
+  )
+}
+
+type AppPath =
+  | '/app'
+  | '/app/onboarding'
+  | '/app/staff'
+  | '/app/facilities'
+  | '/app/permits'
+  | '/app/occupancy'
+  | '/app/availability'
+  | '/app/reservations'
+  | '/app/override'
+  | '/app/reports'
+  | '/attendant'
+function NavItem({
+  to,
+  label,
+  icon: Icon,
+  collapsed,
+}: {
+  to: AppPath
+  label: string
+  icon: LucideIcon
+  collapsed: boolean
 }) {
   return (
     <Link
       to={to}
       activeOptions={{ exact: to === '/app' }}
-      className="block rounded-md px-3 py-2 font-medium hover:bg-muted"
-      activeProps={{ className: 'bg-muted text-foreground' }}
+      title={collapsed ? label : undefined}
+      className={cn('sidebar-nav-link', collapsed && 'justify-center px-0')}
+      activeProps={{ className: 'sidebar-nav-link-active' }}
     >
-      {children}
+      <Icon className="size-[17px] shrink-0" aria-hidden="true" />
+      {!collapsed && <span>{label}</span>}
     </Link>
   )
 }
