@@ -31,6 +31,7 @@
   --color-sidebar-primary: var(--sidebar-primary);
   --color-sidebar-foreground: var(--sidebar-foreground);
   --color-sidebar: var(--sidebar);
+  --color-sidebar-muted: var(--sidebar-muted);
   --color-chart-5: var(--chart-5);
   --color-chart-4: var(--chart-4);
   --color-chart-3: var(--chart-3);
@@ -65,39 +66,39 @@
 }
 
 :root {
-  /* ParkOS chrome is monochrome. Color belongs to live space status only. */
-  --background: #fafaf8; /* Paper */
-  --foreground: #0b0b0c; /* Ink */
-  --card: #fafaf8;
-  --card-foreground: #0b0b0c;
-  --popover: #fafaf8;
-  --popover-foreground: #0b0b0c;
-  --primary: #0b0b0c;
-  --primary-foreground: #fafaf8;
-  --secondary: #e4e4e1; /* Fog */
-  --secondary-foreground: #0b0b0c;
-  --muted: #e4e4e1;
-  --muted-foreground: #8a8c90; /* Concrete */
-  --accent: #e4e4e1;
-  --accent-foreground: #0b0b0c;
-  --destructive: #0b0b0c;
-  --border: #e4e4e1;
-  --input: #e4e4e1;
-  --ring: #0b0b0c;
+  --background: #f5f5f2;
+  --foreground: #17191f;
+  --card: #fcfcfa;
+  --card-foreground: #17191f;
+  --popover: #fcfcfa;
+  --popover-foreground: #17191f;
+  --primary: #4f5fce;
+  --primary-foreground: #ffffff;
+  --secondary: #ebece9;
+  --secondary-foreground: #242730;
+  --muted: #eeeef0;
+  --muted-foreground: #71747e;
+  --accent: #e8eaf8;
+  --accent-foreground: #343f96;
+  --destructive: #c43e4f;
+  --border: #dedfdb;
+  --input: #d7d9d6;
+  --ring: #5969d8;
   --chart-1: #0b0b0c;
   --chart-2: #2a2b2d;
   --chart-3: #8a8c90;
   --chart-4: #e4e4e1;
   --chart-5: #fafaf8;
-  --radius: 0.1875rem;
-  --sidebar: #2a2b2d; /* Asphalt */
-  --sidebar-foreground: #fafaf8;
+  --radius: 0.625rem;
+  --sidebar: #17191f;
+  --sidebar-foreground: #f7f7f4;
   --sidebar-primary: #fafaf8;
   --sidebar-primary-foreground: #2a2b2d;
-  --sidebar-accent: #0b0b0c;
+  --sidebar-accent: #262a34;
   --sidebar-accent-foreground: #fafaf8;
-  --sidebar-border: #8a8c90;
-  --sidebar-ring: #fafaf8;
+  --sidebar-border: #343844;
+  --sidebar-ring: #aeb8ff;
+  --sidebar-muted: #b2b6c1;
 
   /* Parking spot status: available=green-600, occupied=rose-600,
      reserved=amber-500, maintenance=gray-500. */
@@ -154,14 +155,16 @@
   }
   body {
     @apply bg-background text-foreground;
+    min-width: 360px;
+    font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
   }
   html {
     @apply font-sans;
   }
 
   ::selection {
-    background: var(--foreground);
-    color: var(--background);
+    background: color-mix(in srgb, var(--primary) 24%, transparent);
+    color: var(--foreground);
   }
 
   [data-sonner-toaster] {
@@ -191,5 +194,178 @@
     font-weight: 600;
     letter-spacing: 0.14em;
     text-transform: uppercase;
+  }
+
+  .text-sidebar-muted {
+    color: var(--sidebar-muted);
+  }
+
+  .sidebar-nav-link {
+    @apply flex h-10 items-center gap-3 rounded-xl px-3 text-[13px] font-medium text-sidebar-muted transition-all duration-200 hover:bg-white/[0.07] hover:text-white focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-sidebar-ring;
+  }
+
+  .sidebar-nav-scroll {
+    scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
+    scrollbar-width: thin;
+  }
+  .sidebar-nav-scroll::-webkit-scrollbar {
+    width: 6px;
+  }
+  .sidebar-nav-scroll::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .sidebar-nav-scroll::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.16);
+    border-radius: 999px;
+  }
+
+  .sidebar-nav-link-active {
+    @apply bg-white/[0.09] text-white shadow-[inset_0_0_0_1px_rgba(255,255,255,0.045)];
+  }
+
+  .sidebar-nav-link-active svg {
+    color: #aeb8ff;
+  }
+
+  .sidebar-footer-link {
+    @apply flex h-9 items-center gap-3 rounded-lg px-2 text-xs text-sidebar-muted transition hover:bg-white/6 hover:text-white;
+  }
+
+  .sidebar-icon-button {
+    @apply grid size-8 shrink-0 place-items-center rounded-lg text-sidebar-muted transition hover:bg-white/8 hover:text-white focus-visible:outline-2 focus-visible:outline-sidebar-ring;
+  }
+
+  .command-icon-button {
+    @apply grid size-9 shrink-0 place-items-center rounded-lg border border-border/80 bg-card text-muted-foreground shadow-sm transition hover:border-primary/25 hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring;
+  }
+
+  .section-card {
+    @apply min-w-0 overflow-hidden rounded-2xl border border-border/80 bg-card shadow-[0_1px_2px_rgba(21,24,31,0.02),0_8px_24px_rgba(21,24,31,0.035)];
+  }
+
+  .metric-card {
+    @apply min-w-0 overflow-hidden rounded-2xl border border-border/80 bg-card p-4 shadow-[0_1px_2px_rgba(21,24,31,0.02),0_8px_24px_rgba(21,24,31,0.025)] transition duration-200 hover:-translate-y-0.5 hover:shadow-[0_12px_30px_rgba(21,24,31,0.055)];
+  }
+
+  .metric-icon {
+    @apply grid size-8 place-items-center rounded-lg border bg-muted/50 text-muted-foreground;
+  }
+  .metric-icon-available {
+    @apply border-status-available/15 bg-status-available/8 text-status-available;
+  }
+  .metric-icon-occupied {
+    @apply border-status-occupied/15 bg-status-occupied/8 text-status-occupied;
+  }
+  .metric-icon-revenue {
+    @apply border-primary/15 bg-primary/8 text-primary;
+  }
+
+  .status-dot {
+    @apply relative size-2 rounded-full;
+  }
+  .status-dot-live {
+    @apply bg-status-available;
+    box-shadow: 0 0 0 4px
+      color-mix(in srgb, var(--status-available) 12%, transparent);
+  }
+  .status-dot-warning {
+    @apply bg-status-reserved;
+  }
+  .status-dot-quiet {
+    @apply bg-status-maintenance;
+  }
+
+  .dashboard-space {
+    @apply flex h-12 min-w-0 items-center justify-center rounded-lg border text-[10px] font-semibold transition hover:-translate-y-0.5;
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+  }
+  .dashboard-space-available {
+    @apply border-status-available/20 bg-status-available/[0.07] text-status-available;
+  }
+  .dashboard-space-occupied {
+    @apply border-status-occupied/20 bg-status-occupied/[0.08] text-status-occupied;
+  }
+  .dashboard-space-reserved {
+    @apply border-status-reserved/25 bg-status-reserved/10 text-amber-700;
+  }
+  .dashboard-space-maintenance {
+    @apply border-status-maintenance/20 bg-status-maintenance/10 text-status-maintenance;
+  }
+  .legend-available {
+    @apply bg-status-available;
+  }
+  .legend-occupied {
+    @apply bg-status-occupied;
+  }
+  .legend-reserved {
+    @apply bg-status-reserved;
+  }
+  .legend-maintenance {
+    @apply bg-status-maintenance;
+  }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .status-dot-live::after {
+      content: '';
+      position: absolute;
+      inset: -4px;
+      border: 1px solid var(--status-available);
+      border-radius: 999px;
+      animation: live-pulse 1.6s ease-out 1;
+    }
+
+    .dashboard-space-change {
+      animation: occupancy-change 420ms ease-out;
+    }
+
+    .metric-value-change {
+      animation: metric-value-change 360ms ease-out;
+    }
+  }
+}
+
+@keyframes live-pulse {
+  0% {
+    opacity: 0.55;
+    transform: scale(0.65);
+  }
+  70%,
+  100% {
+    opacity: 0;
+    transform: scale(1.25);
+  }
+}
+
+@keyframes occupancy-change {
+  0% {
+    opacity: 0.7;
+    transform: scale(0.96);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes metric-value-change {
+  0% {
+    opacity: 0.55;
+    transform: translateY(2px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
   }
 }

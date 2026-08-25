@@ -23,3 +23,10 @@ dist-ssr
 *.sln
 *.sw?
 .tanstack/
+
+# Local tooling and design artifacts
+.claude/
+.agents/
+skills-lock.json
+screenshots/
+/*.png
