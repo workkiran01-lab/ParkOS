@@ -1,0 +1,6 @@
+# The TanStack Router plugin regenerates this file with LF endings whenever the
+# dev server is running. With core.autocrlf=true git checked it out as CRLF, the
+# plugin immediately rewrote it as LF, and git was then stuck reporting a
+# modification that blocked checkout, pull, merge, and cherry-pick.
+# Pinning it to LF in both the repo and the worktree ends the tug-of-war.
+src/routeTree.gen.ts text eol=lf
