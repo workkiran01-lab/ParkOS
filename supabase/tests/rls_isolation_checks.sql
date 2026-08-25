@@ -379,3 +379,69 @@ begin;
   select count(*) as org_a_spaces_visible_to_org_a from public.spaces;       -- PASS: 165
   select count(*) as org_a_holds_visible_to_org_a  from public.space_holds;  -- PASS: >= 0 (Org A only)
 rollback;
+
+
+-- -----------------------------------------------------------------------------
+-- CHECK 7 — account deactivation actually locks the account out.
+--
+-- Revoking sessions is not the whole story: a JWT already in a browser stays
+-- valid until it expires, so the lockout has to hold at the RLS layer too. The
+-- deactivated flag is wired into get_user_role / has_any_role / is_own_customer,
+-- which every policy authorizes through — this proves that wiring, and proves
+-- that reservation and payment ROWS are left intact (deactivation is not
+-- deletion).
+--
+-- Runs as `postgres` inside a rolled-back transaction, so the Org A admin's real
+-- account is never left deactivated.
+-- -----------------------------------------------------------------------------
+begin;
+  -- Baseline: Org A admin can see their org before deactivation.
+  set local role authenticated;
+  select set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000a1","role":"authenticated"}', true);
+
+  select count(*) as facilities_before from public.facilities;   -- PASS: 2
+  select count(*) as reservations_before from public.reservations;
+
+  reset role;
+  insert into public.account_status (user_id, status, deactivated_at)
+  values ('00000000-0000-0000-0000-0000000000a1', 'deactivated', now())
+  on conflict (user_id) do update
+     set status = 'deactivated', deactivated_at = now();
+
+  set local role authenticated;
+  select set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000a1","role":"authenticated"}', true);
+
+  -- Same queries, same user, now deactivated.
+  select public.is_account_deactivated() as flagged;             -- PASS: true
+  select public.get_user_role('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa')
+      as role_after;                                             -- PASS: null
+  select count(*) as facilities_after from public.facilities;    -- PASS: 0
+  select count(*) as reservations_after from public.reservations;-- PASS: 0 (hidden, not deleted)
+
+  -- The user can still read their OWN status row — the login flow depends on it.
+  select status from public.account_status;                      -- PASS: 1 row, 'deactivated'
+
+  reset role;
+  -- Rows are hidden by policy, not removed: as owner (RLS-exempt) the history
+  -- is still all there.
+  select count(*) as reservations_still_stored from public.reservations;  -- PASS: same as _before
+  select count(*) as payments_still_stored from public.payments;          -- PASS: unchanged
+rollback;
+
+-- -----------------------------------------------------------------------------
+-- CHECK 8 — deactivate_account() refuses while a permit subscription is live.
+-- EXPECT: the first block raises PERMIT_SUBSCRIPTION_ACTIVE and writes nothing;
+-- the second (no live permit) succeeds and revokes the sessions.
+-- Substitute a customer user id from your own seed data for :customer_uid.
+-- -----------------------------------------------------------------------------
+-- begin;
+--   set local role authenticated;
+--   select set_config('request.jwt.claims',
+--     '{"sub":":customer_uid","role":"authenticated"}', true);
+--   select public.deactivate_account();
+--   -- PASS (permit holder): ERROR "PERMIT_SUBSCRIPTION_ACTIVE"
+--   -- PASS (no permit):     one row in account_status, zero rows in auth.sessions
+--   --                       for that user, reservations/payments counts unchanged.
+-- rollback;

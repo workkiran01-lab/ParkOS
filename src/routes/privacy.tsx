@@ -2,6 +2,7 @@ import type { ReactNode } from 'react'
 import { createFileRoute } from '@tanstack/react-router'
 import { PublicShell } from '@/components/layout/PublicShell'
 import { Card, CardContent } from '@/components/ui/card'
+import { SUPPORT_EMAIL } from '@/lib/account'
 
 export const Route = createFileRoute('/privacy')({
   component: Privacy,
@@ -138,7 +139,7 @@ function Privacy() {
           <Clause number={6} title="Your rights">
             <p>
               You may request access to, correction of, or deletion of your
-              personal data by contacting us at [contact email].
+              personal data by contacting us at {SUPPORT_EMAIL}.
             </p>
           </Clause>
 
@@ -164,7 +165,7 @@ function Privacy() {
           </Clause>
 
           <Clause number={10} title="Contact">
-            <p>Questions about this policy: [contact email].</p>
+            <p>Questions about this policy: {SUPPORT_EMAIL}.</p>
           </Clause>
         </div>
       </section>

@@ -13,10 +13,13 @@ const ERROR_MESSAGES: Record<string, string> = {
   PAYMENT_AMOUNT_INVALID: 'This reservation does not have a payable balance.',
   INVALID_REQUEST: 'The payment request was incomplete. Please try again.',
   INVALID_RETURN_ORIGIN: 'Checkout could not open from this page.',
-  CHECKOUT_UNAVAILABLE: 'Checkout is temporarily unavailable. Please try again.',
+  CHECKOUT_UNAVAILABLE:
+    'Checkout is temporarily unavailable. Please try again.',
   REFUND_UNAVAILABLE: 'The refund could not be started. Please try again.',
   STRIPE_NOT_CONFIGURED: 'Payments are not configured yet.',
   SPACE_UNAVAILABLE: 'That space is no longer available for the selected time.',
+  PERMIT_SUBSCRIPTION_ACTIVE:
+    'You have an active permit subscription. Please cancel it before deactivating your account.',
 }
 
 type ErrorLike = {

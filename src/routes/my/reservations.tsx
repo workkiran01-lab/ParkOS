@@ -1,4 +1,10 @@
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type FormEvent,
+} from 'react'
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { Clock3, RefreshCw, XCircle } from 'lucide-react'
 import {
@@ -28,13 +34,11 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { useAuth } from '@/hooks/useAuth'
+import { DEACTIVATED_MESSAGE, signOutIfDeactivated } from '@/lib/account'
 import { friendlyError } from '@/lib/errors'
 import { dollars } from '@/lib/format'
 import { formatRange, parseTstzrange } from '@/lib/holds'
-import {
-  paymentsByReservation,
-  type PaymentSummary,
-} from '@/lib/payments'
+import { paymentsByReservation, type PaymentSummary } from '@/lib/payments'
 import { supabase } from '@/lib/supabase'
 import { AuthPage, Field } from '@/routes/login'
 
@@ -231,12 +235,15 @@ function MyReservations() {
       email: email.trim(),
       password,
     })
-    setAuthBusy(false)
     if (loginError) {
+      setAuthBusy(false)
       setAuthError(
         friendlyError(loginError, 'That email and password did not match.'),
       )
+      return
     }
+    if (await signOutIfDeactivated()) setAuthError(DEACTIVATED_MESSAGE)
+    setAuthBusy(false)
   }
 
   if (authLoading) return <PageSpinner />
@@ -269,7 +276,9 @@ function MyReservations() {
                   onChange={(event) => setPassword(event.target.value)}
                 />
               </Field>
-              {authError && <p className="text-sm text-destructive">{authError}</p>}
+              {authError && (
+                <p className="text-sm text-destructive">{authError}</p>
+              )}
               <Button className="w-full" type="submit" disabled={authBusy}>
                 {authBusy ? 'Logging in…' : 'Log in'}
               </Button>
@@ -292,9 +301,14 @@ function MyReservations() {
               Every booking on this account, across all parking operators.
             </p>
           </div>
-          <Button variant="ghost" onClick={() => supabase.auth.signOut()}>
-            Sign out
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" asChild>
+              <Link to="/my/settings">Settings</Link>
+            </Button>
+            <Button variant="ghost" onClick={() => supabase.auth.signOut()}>
+              Sign out
+            </Button>
+          </div>
         </div>
 
         {checkout && (
@@ -362,7 +376,8 @@ function MyReservations() {
                         <TableCell>
                           <Badge
                             variant={
-                              row.status === 'cancelled' || row.status === 'no_show'
+                              row.status === 'cancelled' ||
+                              row.status === 'no_show'
                                 ? 'outline'
                                 : 'default'
                             }
@@ -371,7 +386,9 @@ function MyReservations() {
                           </Badge>
                         </TableCell>
                         <TableCell>
-                          <PaymentStatusBadge status={row.payment?.status ?? null} />
+                          <PaymentStatusBadge
+                            status={row.payment?.status ?? null}
+                          />
                         </TableCell>
                         <TableCell className="text-right">
                           {dollars(row.total_cents)} {row.currency}
@@ -379,7 +396,9 @@ function MyReservations() {
                         <TableCell>
                           <div className="flex flex-wrap gap-2">
                             {row.status === 'pending' && !paymentSettled && (
-                              <PayNowButton reservationId={row.reservation_id} />
+                              <PayNowButton
+                                reservationId={row.reservation_id}
+                              />
                             )}
                             {paymentSettled && (
                               <DownloadReceiptButton
@@ -395,7 +414,8 @@ function MyReservations() {
                                 endIso={end.toISOString()}
                                 isStaff={false}
                                 allowExtend={
-                                  !row.payment || row.payment.status === 'failed'
+                                  !row.payment ||
+                                  row.payment.status === 'failed'
                                 }
                                 onDone={() => {
                                   void load()
@@ -433,8 +453,8 @@ function PermitsSection({ permits }: { permits: PermitRow[] }) {
       <CardHeader>
         <CardTitle>Monthly permits</CardTitle>
         <CardDescription>
-          Your assigned parking spaces. To change or cancel a permit, contact the
-          operator — permits are staff-managed.
+          Your assigned parking spaces. To change or cancel a permit, contact
+          the operator — permits are staff-managed.
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -451,8 +471,12 @@ function PermitsSection({ permits }: { permits: PermitRow[] }) {
           <TableBody>
             {permits.map((permit) => (
               <TableRow key={permit.permit_id}>
-                <TableCell className="font-medium">{permit.facility_name}</TableCell>
-                <TableCell className="tabular-nums">{permit.space_number}</TableCell>
+                <TableCell className="font-medium">
+                  {permit.facility_name}
+                </TableCell>
+                <TableCell className="tabular-nums">
+                  {permit.space_number}
+                </TableCell>
                 <TableCell className="text-right tabular-nums">
                   {dollars(permit.monthly_rate_cents)} {permit.currency}
                 </TableCell>

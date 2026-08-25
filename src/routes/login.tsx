@@ -1,5 +1,10 @@
 import { useState, type FormEvent, type ReactNode } from 'react'
-import { createFileRoute, Link, redirect, useNavigate } from '@tanstack/react-router'
+import {
+  createFileRoute,
+  Link,
+  redirect,
+  useNavigate,
+} from '@tanstack/react-router'
 import { Button } from '@/components/ui/button'
 import {
   Card,
@@ -9,6 +14,7 @@ import {
   CardTitle,
 } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
+import { DEACTIVATED_MESSAGE, signOutIfDeactivated } from '@/lib/account'
 import { supabase } from '@/lib/supabase'
 
 export const Route = createFileRoute('/login')({
@@ -38,12 +44,21 @@ function Login() {
       password,
     })
 
-    setSubmitting(false)
     if (signInError) {
+      setSubmitting(false)
       setError(signInError.message)
       return
     }
 
+    // A deactivated account can still authenticate — the rejection happens here
+    // rather than as a generic auth error on the way into the app.
+    if (await signOutIfDeactivated()) {
+      setSubmitting(false)
+      setError(DEACTIVATED_MESSAGE)
+      return
+    }
+
+    setSubmitting(false)
     await navigate({ to: '/app' })
   }
 
@@ -81,7 +96,10 @@ function Login() {
           </form>
           <p className="mt-5 text-center text-sm text-muted-foreground">
             New to ParkOS?{' '}
-            <Link to="/signup" className="font-medium text-foreground underline">
+            <Link
+              to="/signup"
+              className="font-medium text-foreground underline"
+            >
               Create an account
             </Link>
           </p>
@@ -104,7 +122,13 @@ export function AuthPage({ children }: { children: ReactNode }) {
   )
 }
 
-export function Field({ label, children }: { label: string; children: ReactNode }) {
+export function Field({
+  label,
+  children,
+}: {
+  label: string
+  children: ReactNode
+}) {
   return (
     <label className="grid gap-1.5 text-sm font-medium">
       {label}
