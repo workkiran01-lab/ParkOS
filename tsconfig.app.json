@@ -26,5 +26,8 @@
     "erasableSyntaxOnly": true,
     "noFallthroughCasesInSwitch": true
   },
-  "include": ["src"]
+  "include": ["src"],
+  /* Self-check files run under tsx with node builtins, not in the browser
+     bundle. Excluding them keeps the app build free of @types/node. */
+  "exclude": ["src/**/*.test.ts"]
 }
