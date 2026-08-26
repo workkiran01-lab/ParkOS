@@ -107,14 +107,14 @@ export function AppShell(props: AppShellProps) {
 
   const sidebarInner = (isMobile: boolean) => (
     <>
-      <div className="flex h-[76px] items-center justify-between px-5">
+      <div className="flex h-16 items-center justify-between px-4">
         <Link
           to="/app"
-          className="flex min-w-0 items-center gap-3 rounded-lg focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-sidebar-ring"
+          className="flex min-w-0 items-center gap-3 rounded-md focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-sidebar-ring"
         >
           <BrandMark />
           {(isMobile || !collapsed) && (
-            <span className="text-lg font-semibold tracking-[-0.04em] text-white">
+            <span className="text-lg font-semibold tracking-[-0.04em] text-sidebar-foreground">
               Park<span className="text-sidebar-muted">OS</span>
             </span>
           )}
@@ -155,14 +155,14 @@ export function AppShell(props: AppShellProps) {
         )}
         <div
           className={cn(
-            'mt-1 flex items-center gap-2 rounded-xl bg-white/[0.045] p-2',
+            'mt-1 flex items-center gap-2 rounded-md border border-sidebar-border/25 bg-sidebar-foreground/[0.04] p-2',
             !isMobile && collapsed && 'justify-center',
           )}
         >
           <Avatar name={props.fullName} />
           {(isMobile || !collapsed) && (
             <div className="min-w-0 flex-1">
-              <p className="truncate text-xs font-medium text-white">
+              <p className="truncate text-xs font-medium text-sidebar-foreground">
                 {props.fullName || 'ParkOS user'}
               </p>
               <p className="mt-0.5 truncate text-[10px] capitalize text-sidebar-muted">
@@ -186,15 +186,10 @@ export function AppShell(props: AppShellProps) {
           <button
             type="button"
             onClick={() => setCollapsed((value) => !value)}
-            className="mt-2 flex h-9 w-full items-center justify-center rounded-lg text-sidebar-muted transition hover:bg-white/6 hover:text-white"
+            className="mt-2 flex h-9 w-full items-center justify-center rounded-md text-sidebar-muted hover:bg-sidebar-foreground/6 hover:text-sidebar-foreground"
             aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
           >
-            <ChevronsLeft
-              className={cn(
-                'size-4 transition-transform',
-                collapsed && 'rotate-180',
-              )}
-            />
+            <ChevronsLeft className={cn('size-4', collapsed && 'rotate-180')} />
           </button>
         )}
       </div>
@@ -202,10 +197,10 @@ export function AppShell(props: AppShellProps) {
   )
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="app-shell min-h-screen bg-background">
       <aside
         className={cn(
-          'fixed inset-y-0 left-0 z-40 hidden flex-col bg-sidebar text-sidebar-foreground shadow-[12px_0_40px_rgba(10,12,18,0.08)] transition-[width] duration-200 md:flex',
+          'fixed inset-y-0 left-0 z-40 hidden flex-col border-r border-sidebar-border/30 bg-sidebar text-sidebar-foreground md:flex',
           collapsed ? 'w-[76px]' : 'w-[264px]',
         )}
       >
@@ -215,7 +210,7 @@ export function AppShell(props: AppShellProps) {
         <div className="fixed inset-0 z-50 md:hidden">
           <button
             type="button"
-            className="absolute inset-0 bg-slate-950/55 backdrop-blur-[2px]"
+            className="absolute inset-0 bg-sidebar/70"
             onClick={() => setMobileOpen(false)}
             aria-label="Close navigation overlay"
           />
@@ -224,7 +219,7 @@ export function AppShell(props: AppShellProps) {
             role="dialog"
             aria-modal="true"
             aria-label="Navigation"
-            className="relative flex h-full w-[min(86vw,320px)] flex-col bg-sidebar text-sidebar-foreground shadow-2xl animate-in slide-in-from-left duration-200"
+            className="overlay-surface relative flex h-full w-[min(86vw,320px)] flex-col bg-sidebar text-sidebar-foreground"
           >
             {sidebarInner(true)}
           </aside>
@@ -232,11 +227,11 @@ export function AppShell(props: AppShellProps) {
       )}
       <div
         className={cn(
-          'min-h-screen min-w-0 transition-[padding] duration-200',
+          'min-h-screen min-w-0',
           collapsed ? 'md:pl-[76px]' : 'md:pl-[264px]',
         )}
       >
-        <header className="sticky top-0 z-30 flex h-16 items-center gap-3 border-b border-border/80 bg-background/90 px-4 backdrop-blur-xl sm:px-6">
+        <header className="command-bar sticky top-0 z-30 flex h-14 items-center gap-3 border-b border-border bg-background px-4 sm:px-6">
           <button
             type="button"
             onClick={() => setMobileOpen(true)}
@@ -258,7 +253,7 @@ export function AppShell(props: AppShellProps) {
                 onValueChange={props.onFacilityChange}
               >
                 <SelectTrigger
-                  className="h-9 w-[118px] border-border/80 bg-card text-xs shadow-none sm:w-[190px]"
+                  className="selected-surface h-9 w-[118px] border-border bg-card text-xs shadow-none sm:w-[190px]"
                   aria-label="Active facility"
                 >
                   <SelectValue placeholder="Facility" />
@@ -275,11 +270,11 @@ export function AppShell(props: AppShellProps) {
             <button
               type="button"
               onClick={() => setCommandOpen(true)}
-              className="hidden h-9 items-center gap-2 rounded-lg border border-border/80 bg-card px-3 text-xs text-muted-foreground shadow-sm transition hover:border-primary/25 hover:text-foreground lg:flex"
+              className="selected-surface hidden h-9 items-center gap-2 rounded-md border border-border bg-card px-3 text-xs text-muted-foreground hover:border-foreground hover:text-foreground lg:flex"
             >
               <Search className="size-3.5" />
               <span>Quick find</span>
-              <kbd className="ml-4 rounded border bg-muted px-1.5 py-0.5 font-sans text-[9px]">
+              <kbd className="ml-4 rounded-sm border bg-muted px-1.5 py-0.5 font-data text-[9px]">
                 ⌘K
               </kbd>
             </button>
@@ -298,7 +293,7 @@ export function AppShell(props: AppShellProps) {
               <button
                 type="button"
                 onClick={() => setProfileOpen((open) => !open)}
-                className="flex h-9 items-center gap-2 rounded-lg border border-border/80 bg-card px-1.5 pr-2 shadow-sm"
+                className="selected-surface flex h-9 items-center gap-2 rounded-md border border-border bg-card px-1.5 pr-2"
                 aria-label="Open user menu"
                 aria-expanded={profileOpen}
               >
@@ -306,7 +301,7 @@ export function AppShell(props: AppShellProps) {
                 <ChevronDown className="size-3 text-muted-foreground" />
               </button>
               {profileOpen && (
-                <div className="absolute right-0 top-11 w-56 rounded-xl border bg-popover p-2 shadow-xl">
+                <div className="overlay-surface absolute right-0 top-11 w-56 border bg-popover p-2">
                   <div className="px-2 py-2">
                     <p className="truncate text-sm font-medium">
                       {props.fullName || 'ParkOS user'}
@@ -318,7 +313,7 @@ export function AppShell(props: AppShellProps) {
                   <button
                     type="button"
                     onClick={props.onSignOut}
-                    className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-sm transition hover:bg-muted"
+                    className="flex w-full items-center gap-2 rounded-md px-2 py-2 text-sm hover:bg-muted"
                   >
                     <LogOut className="size-4" />
                     Sign out
@@ -328,7 +323,7 @@ export function AppShell(props: AppShellProps) {
             </div>
           </div>
         </header>
-        <main className="min-w-0 overflow-x-hidden px-4 py-6 sm:px-6 sm:py-8 xl:px-8">
+        <main className="min-w-0 overflow-x-hidden px-4 py-5 sm:px-6 xl:px-8">
           {props.children}
         </main>
       </div>
@@ -339,9 +334,8 @@ export function AppShell(props: AppShellProps) {
 
 function BrandMark() {
   return (
-    <span className="relative grid size-9 shrink-0 place-items-center rounded-[11px] bg-white text-sidebar">
-      <span className="absolute left-[8px] top-[7px] h-[18px] w-[3px] rounded-full bg-current" />
-      <span className="ml-1 text-sm font-black tracking-[-0.12em]">P</span>
+    <span className="brand-ticket" aria-hidden="true">
+      <span className="text-xs font-black tracking-[-0.08em]">P</span>
     </span>
   )
 }
@@ -361,8 +355,10 @@ function Avatar({
   return (
     <span
       className={cn(
-        'grid size-7 shrink-0 place-items-center rounded-lg text-[10px] font-bold',
-        light ? 'bg-primary text-primary-foreground' : 'bg-white/10 text-white',
+        'grid size-7 shrink-0 place-items-center rounded-md text-[10px] font-bold',
+        light
+          ? 'bg-primary text-primary-foreground'
+          : 'bg-sidebar-foreground/10 text-sidebar-foreground',
       )}
     >
       {initials}
@@ -386,7 +382,7 @@ function QuickFind({ onClose }: { onClose: () => void }) {
   }, [onClose])
   return (
     <div
-      className="fixed inset-0 z-[60] flex items-start justify-center bg-slate-950/35 px-4 pt-[16vh] backdrop-blur-sm"
+      className="fixed inset-0 z-[60] flex items-start justify-center bg-sidebar/60 px-4 pt-[14vh]"
       role="dialog"
       aria-modal="true"
       aria-label="Quick find"
@@ -399,7 +395,7 @@ function QuickFind({ onClose }: { onClose: () => void }) {
       />
       <div
         ref={dialogRef}
-        className="relative w-full max-w-lg overflow-hidden rounded-2xl border bg-popover shadow-2xl"
+        className="overlay-surface relative w-full max-w-lg overflow-hidden border bg-popover"
       >
         <div className="flex items-center gap-3 border-b px-4 py-3">
           <Command className="size-4 text-muted-foreground" />
@@ -424,7 +420,7 @@ function QuickFind({ onClose }: { onClose: () => void }) {
               key={item.to}
               to={item.to}
               onClick={onClose}
-              className="flex items-center justify-between rounded-xl px-3 py-3 text-sm font-medium transition hover:bg-muted focus-visible:bg-muted"
+              className="selected-surface flex items-center justify-between rounded-md px-3 py-3 text-sm font-medium hover:bg-muted focus-visible:bg-muted"
             >
               <span>{item.label}</span>
               <span className="text-xs text-muted-foreground">Open</span>

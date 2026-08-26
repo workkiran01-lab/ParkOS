@@ -15,14 +15,14 @@ export function PageHeader({
   actions?: ReactNode
 }) {
   return (
-    <header className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
+    <header className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
       <div className="max-w-2xl">
         {eyebrow && <p className="signage-label text-primary">{eyebrow}</p>}
-        <h1 className="mt-2 text-3xl font-semibold tracking-[-0.04em] sm:text-4xl">
+        <h1 className="mt-1.5 text-2xl font-bold leading-tight tracking-[-0.035em] sm:text-3xl">
           {title}
         </h1>
         {description && (
-          <p className="mt-2 max-w-xl text-sm leading-6 text-muted-foreground sm:text-base">
+          <p className="mt-1.5 max-w-xl text-sm leading-5 text-muted-foreground/75">
             {description}
           </p>
         )}
@@ -48,15 +48,21 @@ export function MetricCard({
   tone?: 'neutral' | 'available' | 'occupied' | 'revenue'
 }) {
   return (
-    <section className="metric-card group">
-      <div className={cn('metric-icon', `metric-icon-${tone}`)}>
-        <Icon className="size-4" aria-hidden="true" />
+    <section className={cn('metric-card', `metric-card-${tone}`)}>
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground/75">
+          {label}
+        </p>
+        <div className={cn('metric-icon', `metric-icon-${tone}`)}>
+          <Icon className="size-3.5" aria-hidden="true" />
+        </div>
       </div>
-      <p className="mt-4 text-xs font-medium text-muted-foreground">{label}</p>
-      <p className="mt-1 font-data text-3xl font-semibold tracking-[-0.05em] sm:text-4xl">
+      <p className="mt-3 font-data text-[2.5rem] font-semibold leading-none tracking-[-0.055em] sm:text-[2.75rem]">
         {value}
       </p>
-      <p className="mt-1.5 text-xs text-muted-foreground">{hint}</p>
+      <p className="mt-2 text-[11px] leading-4 text-muted-foreground/75">
+        {hint}
+      </p>
     </section>
   )
 }
@@ -76,11 +82,11 @@ export function SectionCard({
 }) {
   return (
     <section className={cn('section-card', className)}>
-      <header className="flex items-start justify-between gap-4 border-b border-border/70 px-5 py-4 sm:px-6">
+      <header className="flex items-start justify-between gap-4 border-b border-border px-4 py-3.5 sm:px-5">
         <div>
-          <h2 className="text-sm font-semibold tracking-tight">{title}</h2>
+          <h2 className="text-[13px] font-bold tracking-[0.01em]">{title}</h2>
           {description && (
-            <p className="mt-1 text-xs leading-5 text-muted-foreground">
+            <p className="mt-0.5 text-[11px] leading-4 text-muted-foreground/75">
               {description}
             </p>
           )}
@@ -125,15 +131,15 @@ export function StatusIndicator({
     : null
 
   return (
-    <span className="inline-flex items-center gap-2 whitespace-nowrap text-xs font-medium text-muted-foreground">
+    <span className="inline-flex items-center gap-2 whitespace-nowrap text-[11px] text-muted-foreground/75">
       <span
         className={cn('status-dot', `status-dot-${tone}`)}
         aria-hidden="true"
       />
-      {label}
+      <span className="font-semibold text-foreground">{label}</span>
       {showUpdated && seconds != null && (
-        <span className="font-normal text-muted-foreground/80">
-          · Updated {seconds} {seconds === 1 ? 'second' : 'seconds'} ago
+        <span>
+          · Updated <span className="font-data">{seconds}s</span> ago
         </span>
       )}
     </span>
@@ -150,12 +156,12 @@ export function EmptyState({
   description: string
 }) {
   return (
-    <div className="flex min-h-40 flex-col items-center justify-center px-6 py-10 text-center">
-      <span className="grid size-10 place-items-center rounded-xl border bg-muted/60 text-muted-foreground">
+    <div className="flex min-h-32 flex-col items-center justify-center px-5 py-6 text-center">
+      <span className="grid size-9 place-items-center rounded-md border bg-muted/40 text-muted-foreground">
         <Icon className="size-4" aria-hidden="true" />
       </span>
-      <p className="mt-3 text-sm font-medium">{title}</p>
-      <p className="mt-1 max-w-xs text-xs leading-5 text-muted-foreground">
+      <p className="mt-2.5 text-sm font-semibold">{title}</p>
+      <p className="mt-1 max-w-xs text-xs leading-5 text-muted-foreground/75">
         {description}
       </p>
     </div>

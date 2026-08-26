@@ -1,4 +1,10 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+} from 'react'
 import { createFileRoute, Link } from '@tanstack/react-router'
 import {
   ArrowRight,
@@ -264,16 +270,28 @@ function DashboardView() {
         },
         refresh,
       )
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'reservations',
+          filter: `facility_id=eq.${facilityId}`,
+        },
+        refresh,
+      )
       .subscribe((subscriptionStatus) => {
-        if (subscriptionStatus === 'SUBSCRIBED') {
-          setRealtimeStatus('live')
-        } else if (subscriptionStatus === 'TIMED_OUT') {
-          setRealtimeStatus('stale')
-        } else if (
-          subscriptionStatus === 'CHANNEL_ERROR' ||
-          subscriptionStatus === 'CLOSED'
-        ) {
-          setRealtimeStatus('unavailable')
+        switch (subscriptionStatus) {
+          case 'SUBSCRIBED':
+            setRealtimeStatus('live')
+            break
+          case 'TIMED_OUT':
+            setRealtimeStatus('stale')
+            break
+          case 'CHANNEL_ERROR':
+          case 'CLOSED':
+            setRealtimeStatus('unavailable')
+            break
         }
       })
     return () => {
@@ -282,18 +300,7 @@ function DashboardView() {
     }
   }, [orgId, facilityId, loadDashboard])
 
-  const connectionStatus: ConnectionStatus =
-    error || roleError
-      ? updatedAt
-        ? 'stale'
-        : 'unavailable'
-      : loading && !updatedAt
-        ? 'connecting'
-        : updatedAt && realtimeStatus === 'live'
-          ? 'live'
-          : updatedAt
-            ? 'stale'
-            : realtimeStatus
+  const connectionStatus: ConnectionStatus = realtimeStatus
 
   useEffect(() => {
     setConnection(connectionStatus, updatedAt)
@@ -318,14 +325,14 @@ function DashboardView() {
 
   if (!facilitiesLoading && facilities.length === 0)
     return (
-      <div className="mx-auto max-w-3xl pt-12">
+      <div className="mx-auto max-w-3xl pt-8">
         <SectionCard title="Your workspace is ready for a facility">
           <EmptyState
             icon={Sparkles}
             title="Complete the initial setup"
             description="Create your first facility, zones, and spaces to begin live operations."
           />
-          <div className="flex justify-center border-t p-5">
+          <div className="flex justify-center border-t p-4">
             <Button asChild>
               <Link to="/app/onboarding">
                 Start onboarding <ArrowRight className="size-4" />
@@ -337,7 +344,7 @@ function DashboardView() {
     )
 
   return (
-    <div className="mx-auto w-full min-w-0 max-w-[1480px] space-y-7 animate-in fade-in slide-in-from-bottom-1 duration-300">
+    <div className="dashboard-root mx-auto w-full min-w-0 max-w-[1480px] space-y-5">
       <PageHeader
         eyebrow="Live operations"
         title={`${greeting}${fullName ? `, ${firstName(fullName)}` : ''}`}
@@ -348,13 +355,13 @@ function DashboardView() {
         }
         actions={
           <>
-            <Button variant="outline" asChild>
+            <Button variant="outline" className="h-9 px-3" asChild>
               <Link to="/app/reservations">
                 <Plus className="size-4" />
                 New reservation
               </Link>
             </Button>
-            <Button asChild>
+            <Button className="h-9 px-3" asChild>
               <Link to="/attendant">
                 <LogIn className="size-4" />
                 Check in
@@ -366,7 +373,7 @@ function DashboardView() {
       {(error || roleError) && (
         <div
           role="alert"
-          className="rounded-xl border border-destructive/20 bg-destructive/5 px-4 py-3 text-sm text-destructive"
+          className="rounded-md border border-destructive/30 bg-card px-4 py-3 text-sm text-destructive"
         >
           <div className="flex flex-wrap items-center justify-between gap-2">
             <span>{error ?? roleError}</span>
@@ -374,7 +381,7 @@ function DashboardView() {
           </div>
         </div>
       )}
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-4">
         <MetricCard
           label="Occupied spaces"
           value={
@@ -430,19 +437,19 @@ function DashboardView() {
         />
       </div>
 
-      <div className="grid grid-cols-12 gap-5">
+      <div className="grid grid-cols-12 gap-4">
         <SectionCard
           title="Live occupancy"
           description="A compact view of every active parking space"
           action={
-            <div className="flex items-center gap-4">
+            <div className="flex items-center gap-3">
               <StatusIndicator
                 status={connectionStatus}
                 updatedAt={updatedAt}
               />
               <Link
                 to="/app/occupancy"
-                className="text-xs font-semibold text-primary hover:underline"
+                className="text-xs font-semibold text-primary underline-offset-4 hover:underline"
               >
                 Open map
               </Link>
@@ -450,8 +457,8 @@ function DashboardView() {
           }
           className="col-span-12 xl:col-span-8"
         >
-          <div className="p-5 sm:p-6">
-            <div className="mb-5 flex flex-wrap gap-4 text-[11px] text-muted-foreground">
+          <div className="p-4 sm:p-5">
+            <div className="mb-3.5 flex flex-wrap gap-3 text-[11px] text-muted-foreground/75">
               <Legend tone="available" label="Available" />
               <Legend tone="occupied" label="Occupied" />
               <Legend tone="reserved" label="Reserved" />
@@ -464,26 +471,26 @@ function DashboardView() {
                 description="Add zones and spaces to see a live occupancy map."
               />
             ) : (
-              <div className="space-y-5">
+              <div className="space-y-4">
                 {zones.map((zone) => {
                   const zoneSpaces = spacesByZone.get(zone.id) ?? []
                   if (!zoneSpaces.length) return null
                   return (
                     <div key={zone.id}>
-                      <div className="mb-2.5 flex items-center justify-between">
-                        <p className="text-xs font-semibold">
+                      <div className="mb-2 flex items-center justify-between">
+                        <p className="text-xs font-bold">
                           {zone.name}
                           {zone.level != null && (
-                            <span className="ml-2 font-normal text-muted-foreground">
+                            <span className="ml-2 font-normal text-muted-foreground/75">
                               Level {zone.level}
                             </span>
                           )}
                         </p>
-                        <span className="font-data text-[10px] text-muted-foreground">
+                        <span className="font-data text-[10px] text-muted-foreground/75">
                           {zoneSpaces.length} spaces
                         </span>
                       </div>
-                      <div className="grid grid-cols-[repeat(auto-fill,minmax(46px,1fr))] gap-2">
+                      <div className="grid grid-cols-[repeat(auto-fill,minmax(46px,1fr))] gap-1.5">
                         {zoneSpaces.map((space) => {
                           const tone = spaceTone(space, heldIds.has(space.id))
                           return (
@@ -509,13 +516,13 @@ function DashboardView() {
           </div>
         </SectionCard>
 
-        <div className="col-span-12 space-y-5 xl:col-span-4">
+        <div className="col-span-12 space-y-4 xl:col-span-4">
           <SectionCard
             title="Needs attention"
             description="Overstays and operational alerts"
             action={
               overstays.length > 0 ? (
-                <span className="rounded-full bg-destructive/10 px-2 py-1 font-data text-[10px] font-semibold text-destructive">
+                <span className="rounded-sm border border-destructive/30 px-2 py-0.5 font-data text-[10px] font-semibold text-destructive">
                   {overstays.length}
                 </span>
               ) : undefined
@@ -532,16 +539,16 @@ function DashboardView() {
                 {overstays.slice(0, 4).map((row) => (
                   <div
                     key={row.reservation_id}
-                    className="flex items-center gap-3 px-5 py-4"
+                    className="flex items-center gap-3 px-4 py-3"
                   >
-                    <span className="grid size-9 place-items-center rounded-lg bg-destructive/8 text-destructive">
+                    <span className="grid size-8 place-items-center rounded-md border border-destructive/25 text-destructive">
                       <Clock3 className="size-4" />
                     </span>
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-sm font-medium">
                         {row.customer_name}
                       </p>
-                      <p className="mt-0.5 text-xs text-muted-foreground">
+                      <p className="mt-0.5 text-xs text-muted-foreground/75">
                         Space {row.space_number} · ended{' '}
                         {formatTime(row.ends_at)}
                       </p>
@@ -555,7 +562,7 @@ function DashboardView() {
             title="Quick actions"
             description="Common operator workflows"
           >
-            <div className="grid grid-cols-2 gap-2 p-4">
+            <div className="grid grid-cols-2 gap-2 p-3">
               <QuickAction to="/attendant" icon={LogIn} label="Check in" />
               <QuickAction
                 to="/app/reservations"
@@ -569,14 +576,14 @@ function DashboardView() {
         </div>
       </div>
 
-      <div className="grid grid-cols-12 gap-5">
+      <div className="grid grid-cols-12 gap-4">
         <SectionCard
           title="Recent reservations"
           description="The latest bookings created for this facility"
           action={
             <Link
               to="/app/reservations"
-              className="text-xs font-semibold text-primary hover:underline"
+              className="text-xs font-semibold text-primary underline-offset-4 hover:underline"
             >
               View all
             </Link>
@@ -594,23 +601,23 @@ function DashboardView() {
               {reservations.map((row) => (
                 <div
                   key={row.id}
-                  className="grid grid-cols-[1fr_auto] items-center gap-4 px-5 py-4 sm:grid-cols-[1fr_120px_90px]"
+                  className="grid grid-cols-[1fr_auto] items-center gap-4 px-4 py-3 sm:grid-cols-[1fr_120px_90px]"
                 >
                   <div className="min-w-0">
                     <p className="truncate text-sm font-medium">
                       {row.customer ?? 'Customer'}{' '}
-                      <span className="font-normal text-muted-foreground">
+                      <span className="font-normal text-muted-foreground/75">
                         · Space {row.space ?? '—'}
                       </span>
                     </p>
-                    <p className="mt-1 font-data text-[10px] text-muted-foreground">
+                    <p className="mt-1 font-data text-[10px] text-muted-foreground/75">
                       {row.booking_code}
                     </p>
                   </div>
-                  <p className="hidden text-xs text-muted-foreground sm:block">
+                  <p className="hidden text-xs text-muted-foreground/75 sm:block">
                     {formatRangeStart(row.during)}
                   </p>
-                  <span className="justify-self-end rounded-full border px-2.5 py-1 text-[10px] font-semibold capitalize">
+                  <span className="justify-self-end rounded-sm border px-2 py-0.5 text-[10px] font-semibold capitalize">
                     {row.status}
                   </span>
                 </div>
@@ -634,9 +641,9 @@ function DashboardView() {
               {arrivals.slice(0, 5).map((row) => (
                 <div
                   key={row.reservation_id}
-                  className="flex items-center gap-3 px-5 py-4"
+                  className="flex items-center gap-3 px-4 py-3"
                 >
-                  <span className="relative grid size-8 place-items-center rounded-full bg-status-available/10 text-status-available">
+                  <span className="relative grid size-8 place-items-center rounded-md border border-status-available/50 text-status-available">
                     <CarFront className="size-3.5" />
                     <span className="absolute -right-0.5 -top-0.5 size-2 rounded-full border-2 border-card bg-status-available" />
                   </span>
@@ -644,11 +651,11 @@ function DashboardView() {
                     <p className="truncate text-sm font-medium">
                       {row.customer_name}
                     </p>
-                    <p className="mt-0.5 text-xs text-muted-foreground">
+                    <p className="mt-0.5 text-xs text-muted-foreground/75">
                       Space {row.space_number} · {row.zone_name}
                     </p>
                   </div>
-                  <time className="font-data text-[10px] text-muted-foreground">
+                  <time className="font-data text-[10px] text-muted-foreground/75">
                     {formatTime(row.checked_in_at)}
                   </time>
                 </div>
@@ -672,7 +679,7 @@ function NumberFeedback({
   children: ReactNode
 }) {
   return (
-    <span key={value ?? 'empty'} className="metric-value-change inline-block">
+    <span key={value ?? 'empty'} className="inline-block">
       {children}
     </span>
   )
@@ -707,9 +714,15 @@ function spaceTone(space: Space, held: boolean) {
   return held ? 'occupied' : 'available'
 }
 function Legend({ tone, label }: { tone: string; label: string }) {
+  const code = tone === 'maintenance' ? 'X' : tone[0].toUpperCase()
   return (
     <span className="inline-flex items-center gap-1.5">
-      <span className={cn('size-2 rounded-sm', `legend-${tone}`)} />
+      <span
+        className={cn('legend-marker', `legend-${tone}`)}
+        aria-hidden="true"
+      >
+        {code}
+      </span>
       {label}
     </span>
   )
@@ -726,9 +739,9 @@ function QuickAction({
   return (
     <Link
       to={to}
-      className="group flex min-h-20 flex-col justify-between rounded-xl border bg-muted/20 p-3 text-xs font-semibold transition hover:-translate-y-0.5 hover:border-primary/20 hover:bg-card hover:shadow-sm"
+      className="quick-action group flex min-h-16 flex-col justify-between rounded-md border bg-muted/20 p-3 text-xs font-semibold hover:border-foreground hover:bg-card focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
     >
-      <Icon className="size-4 text-muted-foreground transition group-hover:text-primary" />
+      <Icon className="size-4 text-muted-foreground group-hover:text-primary" />
       <span className="flex items-center justify-between">
         {label}
         <ArrowRight className="size-3 text-muted-foreground" />
