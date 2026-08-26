@@ -1,4 +1,10 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+} from 'react'
 import { createFileRoute, Link } from '@tanstack/react-router'
 import {
   ArrowRight,
@@ -264,16 +270,28 @@ function DashboardView() {
         },
         refresh,
       )
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'reservations',
+          filter: `facility_id=eq.${facilityId}`,
+        },
+        refresh,
+      )
       .subscribe((subscriptionStatus) => {
-        if (subscriptionStatus === 'SUBSCRIBED') {
-          setRealtimeStatus('live')
-        } else if (subscriptionStatus === 'TIMED_OUT') {
-          setRealtimeStatus('stale')
-        } else if (
-          subscriptionStatus === 'CHANNEL_ERROR' ||
-          subscriptionStatus === 'CLOSED'
-        ) {
-          setRealtimeStatus('unavailable')
+        switch (subscriptionStatus) {
+          case 'SUBSCRIBED':
+            setRealtimeStatus('live')
+            break
+          case 'TIMED_OUT':
+            setRealtimeStatus('stale')
+            break
+          case 'CHANNEL_ERROR':
+          case 'CLOSED':
+            setRealtimeStatus('unavailable')
+            break
         }
       })
     return () => {
@@ -282,18 +300,7 @@ function DashboardView() {
     }
   }, [orgId, facilityId, loadDashboard])
 
-  const connectionStatus: ConnectionStatus =
-    error || roleError
-      ? updatedAt
-        ? 'stale'
-        : 'unavailable'
-      : loading && !updatedAt
-        ? 'connecting'
-        : updatedAt && realtimeStatus === 'live'
-          ? 'live'
-          : updatedAt
-            ? 'stale'
-            : realtimeStatus
+  const connectionStatus: ConnectionStatus = realtimeStatus
 
   useEffect(() => {
     setConnection(connectionStatus, updatedAt)
