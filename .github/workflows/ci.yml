@@ -21,6 +21,8 @@ jobs:
 
       - run: npm run lint
 
+      - run: npm run test:sql-guard
+
       - run: npx tsc --noEmit -p tsconfig.app.json
 
       - run: npm run build
