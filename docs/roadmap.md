@@ -11,11 +11,6 @@ first — this file tracks work, not architecture.
   so there is nowhere to put the row. 4 live subscriptions currently bill with zero record, and
   every revenue report is understated by that amount. See the known-gap section in
   `ARCHITECTURE.md`. Arguably the most urgent item here: this is working, selling, untracked revenue.
-- **Booth payments are not included in revenue reporting.** Direct cash/card collection is recorded
-  in `booth_payments`, but `facility_dashboard_summary` and the `report_*` revenue functions still
-  read only Stripe-backed `payments`. Gate collections therefore remain absent from every dashboard
-  and report revenue total until the reporting functions add the second ledger without
-  double-counting mixed-payment reservations.
 - **Customer self-pay handoff at the booth doesn't exist.** Staff can collect cash or card-terminal
   payment directly, but the booth screen has no link or QR that lets the customer start Stripe
   Checkout on their own phone. This is separate from the receipt QR, which opens the staff-only
