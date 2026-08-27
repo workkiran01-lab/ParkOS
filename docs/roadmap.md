@@ -92,6 +92,13 @@ first — this file tracks work, not architecture.
   but the two SQL conventions still diverge if another malformed value is stored. The manifest
   chose `safe_timezone` as the safer behavior; converging the dashboard family onto
   `safe_timezone` remains the durable fix and requires its own migration.
+- **RLS isolation CHECK10 calls a removed checkout signature.**
+  `supabase/dev-only/20260819050000_verify_rls_isolation.sql` still invokes
+  `check_out_reservation(uuid, integer)`, but `20260825010000_booth_payments.sql` replaced that
+  overload with `check_out_reservation(uuid, timestamptz, text, text)`. The rollback-wrapped
+  verifier now reaches CHECK10 and fails with `42883` before it can prove cross-org checkout
+  isolation. Both application callers already use the current named parameters, so this is
+  verifier drift rather than a broken production call. Update CHECK10 and rerun the full verifier.
 - **No back/breadcrumb navigation anywhere in the staff app** (`/app/*`). Noticed during testing.
   A real UX gap, not yet scoped.
 - **Multi-role login edge cases.** One auth user holding both a staff membership and a customer
