@@ -6,6 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "test": "node --test \"src/**/*.test.ts\" \"supabase/functions/**/*.test.ts\"",
+    "test:db": "supabase db query --linked --file supabase/dev-only/20260825010000_verify_booth_payments.sql",
     "lint": "eslint .",
     "format": "prettier --write .",
     "preview": "vite preview"
