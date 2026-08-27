@@ -6,19 +6,20 @@ first — this file tracks work, not architecture.
 
 ## Known gaps (should resolve before real launch)
 
-- **`/checkin/{booking_code}` has no route yet.** The QR code on receipts encodes this URL, so a
-  real scan 404s. Booking-code lookup itself works (confirmed via receipts); only the destination
-  page is missing. Camera-based QR scanning at the booth is a separate, later feature — this is
-  just the page the QR should land on.
 - **Permit subscription payments are not recorded.** Successful monthly charges are never written
   anywhere — `invoice.payment_succeeded` is unhandled and `payments.reservation_id` is `NOT NULL`,
   so there is nowhere to put the row. 4 live subscriptions currently bill with zero record, and
   every revenue report is understated by that amount. See the known-gap section in
   `ARCHITECTURE.md`. Arguably the most urgent item here: this is working, selling, untracked revenue.
-- **Booth-side payment collection UX.** Ties to the in-person payment gap documented in
-  `ARCHITECTURE.md`. Intended flow: at check-in, staff sees what is owed and can either show the
-  customer a QR/payment link to pay from their own phone, or collect cash/card directly at the
-  booth. Needs the payment-method and schema work noted in `ARCHITECTURE.md` first.
+- **Booth payments are not included in revenue reporting.** Direct cash/card collection is recorded
+  in `booth_payments`, but `facility_dashboard_summary` and the `report_*` revenue functions still
+  read only Stripe-backed `payments`. Gate collections therefore remain absent from every dashboard
+  and report revenue total until the reporting functions add the second ledger without
+  double-counting mixed-payment reservations.
+- **Customer self-pay handoff at the booth doesn't exist.** Staff can collect cash or card-terminal
+  payment directly, but the booth screen has no link or QR that lets the customer start Stripe
+  Checkout on their own phone. This is separate from the receipt QR, which opens the staff-only
+  `/checkin/{booking_code}` surface.
 - **Duplicate "Sol city" facility on parkos-dev** (id `9ee7635b-…`). Zero price rules, and an
   invalid IANA timezone string (`Pacific` rather than a real zone such as `America/Los_Angeles`),
   so it is unbookable. Looks like an abandoned setup attempt. Needs cleanup — delete or fix, not
@@ -43,6 +44,15 @@ first — this file tracks work, not architecture.
   `public_create_reservation` → `check_in_walk_in` for the return-type change (same pattern
   already handled once for booking_code generation itself). Not done now — deliberately kept out
   of a UI/design-pass task.
+
+## Implemented in code; deployment remains explicit
+
+- **Receipt QR destination.** `/checkin/{booking_code}` now exists as a staff-only booth surface
+  with booking-code lookup and lifecycle-aware check-in/check-out actions.
+- **Direct booth collection.** `booth_payments` and the trusted `record_booth_payment` RPC record
+  audited cash/card-terminal collection without weakening the Stripe ledger. Migration
+  `20260825010000_booth_payments.sql` must still be applied explicitly to each environment; a code
+  commit does not apply it.
 
 ## Deferred to v2 (already in ARCHITECTURE.md)
 

@@ -1,20 +1,16 @@
 import { useCallback, useEffect, useState } from 'react'
-import { createFileRoute } from '@tanstack/react-router'
+import { createFileRoute, Link } from '@tanstack/react-router'
 import { toast } from 'sonner'
 import { PageSpinner } from '@/components/ui/Spinner'
 import {
   loadFacilityReservations,
+  overstayAt,
   type AttendantReservation,
 } from '@/lib/attendant'
 import { friendlyError } from '@/lib/errors'
 import { dollars } from '@/lib/format'
 import { supabase } from '@/lib/supabase'
-import {
-  bigButton,
-  bigButtonOutline,
-  bigInput,
-  useAttendant,
-} from '@/lib/attendant-ui'
+import { bigButton, bigButtonOutline, useAttendant } from '@/lib/attendant-ui'
 
 export const Route = createFileRoute('/attendant/active')({
   component: ActiveSessions,
@@ -36,7 +32,8 @@ function ActiveSessions() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [openId, setOpenId] = useState<string | null>(null)
-  const [overstay, setOverstay] = useState('')
+  // Server-priced, not typed in: the database owns what an overstay costs.
+  const [overstayCents, setOverstayCents] = useState<number | null>(null)
   const [busy, setBusy] = useState(false)
 
   const load = useCallback(async () => {
@@ -56,23 +53,26 @@ function ActiveSessions() {
     void Promise.resolve().then(load)
   }, [load])
 
-  function openCheckout(id: string) {
-    setOpenId(id)
-    setOverstay('')
+  async function openCheckout(r: AttendantReservation) {
+    setOpenId(r.id)
+    setOverstayCents(null)
+    try {
+      setOverstayCents(await overstayAt(r.id, new Date()))
+    } catch (err) {
+      toast.error(friendlyError(err, 'Could not price the overstay.'))
+      setOpenId(null)
+    }
   }
 
   async function checkOut(r: AttendantReservation) {
-    const overstayCents =
-      overstay.trim() === '' ? 0 : Math.round(Number(overstay) * 100)
-    if (!Number.isFinite(overstayCents) || overstayCents < 0) {
-      toast.error('Enter a valid overstay amount, or leave it blank.')
-      return
-    }
     setBusy(true)
-    const { data, error: coError } = await supabase.rpc('check_out_reservation', {
-      p_reservation_id: r.id,
-      p_overstay_cents: overstayCents,
-    })
+    const { data, error: coError } = await supabase.rpc(
+      'check_out_reservation',
+      {
+        p_reservation_id: r.id,
+        p_departure_at: new Date().toISOString(),
+      },
+    )
     setBusy(false)
     if (coError) {
       toast.error(friendlyError(coError, 'Check-out failed. Please try again.'))
@@ -98,7 +98,10 @@ function ActiveSessions() {
       ) : (
         <div className="space-y-4">
           {rows.map((r) => (
-            <div key={r.id} className="space-y-3 rounded-xl border bg-background p-4">
+            <div
+              key={r.id}
+              className="space-y-3 rounded-xl border bg-background p-4"
+            >
               <div className="space-y-1">
                 <p className="text-xl font-semibold">{r.customer_name}</p>
                 <p className="text-base">
@@ -106,25 +109,29 @@ function ActiveSessions() {
                   {r.license_plate ? ` · ${r.license_plate}` : ''}
                 </p>
                 <p className="text-base text-muted-foreground">
-                  Parked {elapsedSince(r.checked_in_at)} · {dollars(r.total_cents)}{' '}
-                  so far
+                  Parked {elapsedSince(r.checked_in_at)} ·{' '}
+                  {dollars(r.total_cents)} so far
                 </p>
               </div>
 
               {openId === r.id ? (
                 <div className="space-y-3 border-t pt-3">
-                  <label className="block text-base font-medium">
-                    Overstay charge ($, optional)
-                    <input
-                      type="number"
-                      min={0}
-                      step="0.01"
-                      inputMode="decimal"
-                      className={`mt-1 ${bigInput}`}
-                      value={overstay}
-                      onChange={(e) => setOverstay(e.target.value)}
-                    />
-                  </label>
+                  <p className="text-base">
+                    {overstayCents === null
+                      ? 'Pricing overstay…'
+                      : overstayCents > 0
+                        ? `Overstay ${dollars(overstayCents)}, added at check-out.`
+                        : 'Inside the reserved window — no overstay.'}
+                  </p>
+                  {/* Collection lives on the ticket screen, where the stub
+                      prints. This tab closes the session. */}
+                  <Link
+                    to="/checkin/$bookingCode"
+                    params={{ bookingCode: r.booking_code }}
+                    className={bigButtonOutline}
+                  >
+                    Open ticket to collect
+                  </Link>
                   <div className="grid grid-cols-2 gap-2">
                     <button
                       type="button"
@@ -136,7 +143,7 @@ function ActiveSessions() {
                     </button>
                     <button
                       type="button"
-                      disabled={busy}
+                      disabled={busy || overstayCents === null}
                       onClick={() => checkOut(r)}
                       className={bigButton}
                     >
@@ -147,7 +154,7 @@ function ActiveSessions() {
               ) : (
                 <button
                   type="button"
-                  onClick={() => openCheckout(r.id)}
+                  onClick={() => void openCheckout(r)}
                   className={bigButton}
                 >
                   Check Out

@@ -53,6 +53,12 @@ type ListRow = {
   during: string
 }
 type OverstayRow = ListRow & { ends_at: string }
+type RevenueBreakdown = {
+  total: number
+  stripe: number
+  cash: number
+  boothCard: number
+}
 
 export const Route = createFileRoute('/app/occupancy')({
   component: Occupancy,
@@ -66,13 +72,18 @@ function Occupancy() {
   const [zones, setZones] = useState<Zone[]>([])
   const [spaces, setSpaces] = useState<Space[]>([])
   const [holds, setHolds] = useState<Hold[]>([])
-  const [reservationStatus, setReservationStatus] = useState<Map<string, string>>(
-    new Map(),
-  )
+  const [reservationStatus, setReservationStatus] = useState<
+    Map<string, string>
+  >(new Map())
   const [occupantByReservation, setOccupantByReservation] = useState<
     Map<string, string>
   >(new Map())
-  const [revenueCents, setRevenueCents] = useState(0)
+  const [revenue, setRevenue] = useState<RevenueBreakdown>({
+    total: 0,
+    stripe: 0,
+    cash: 0,
+    boothCard: 0,
+  })
   const [arrivals, setArrivals] = useState<ListRow[]>([])
   const [departures, setDepartures] = useState<ListRow[]>([])
   const [overstays, setOverstays] = useState<OverstayRow[]>([])
@@ -108,163 +119,173 @@ function Occupancy() {
   // (zones, spaces, active holds, and the reservations/customers those holds
   // reference) plus the time-sensitive aggregates that are awkward client-side
   // (revenue in facility-local time, today's arrivals/departures, overstays).
-  const loadFacility = useCallback(
-    async (id: string) => {
-      if (!id) return
-      setLoading(true)
-      setError(null)
+  const loadFacility = useCallback(async (id: string) => {
+    if (!id) return
+    setLoading(true)
+    setError(null)
 
-      const zonesResult = await supabase
-        .from('zones')
-        .select('id, name, level')
-        .eq('facility_id', id)
-        .is('archived_at', null)
-        .order('level', { ascending: true, nullsFirst: true })
-        .order('name')
+    const zonesResult = await supabase
+      .from('zones')
+      .select('id, name, level')
+      .eq('facility_id', id)
+      .is('archived_at', null)
+      .order('level', { ascending: true, nullsFirst: true })
+      .order('name')
 
-      if (zonesResult.error) {
-        setError(friendlyError(zonesResult.error, 'Zones could not be loaded.'))
-        setLoading(false)
-        return
-      }
-      const zoneRows = (zonesResult.data ?? []) as Zone[]
-      const zoneIds = zoneRows.map((z) => z.id)
+    if (zonesResult.error) {
+      setError(friendlyError(zonesResult.error, 'Zones could not be loaded.'))
+      setLoading(false)
+      return
+    }
+    const zoneRows = (zonesResult.data ?? []) as Zone[]
+    const zoneIds = zoneRows.map((z) => z.id)
 
-      const spacesResult = zoneIds.length
-        ? await supabase
-            .from('spaces')
-            .select('id, zone_id, space_number, status')
-            .in('zone_id', zoneIds)
-            .is('archived_at', null)
-            .order('space_number')
-        : { data: [], error: null }
+    const spacesResult = zoneIds.length
+      ? await supabase
+          .from('spaces')
+          .select('id, zone_id, space_number, status')
+          .in('zone_id', zoneIds)
+          .is('archived_at', null)
+          .order('space_number')
+      : { data: [], error: null }
 
-      if (spacesResult.error) {
-        setError(friendlyError(spacesResult.error, 'Spaces could not be loaded.'))
-        setLoading(false)
-        return
-      }
-      const spaceRows = (spacesResult.data ?? []) as Space[]
-      const spaceIds = spaceRows.map((s) => s.id)
+    if (spacesResult.error) {
+      setError(friendlyError(spacesResult.error, 'Spaces could not be loaded.'))
+      setLoading(false)
+      return
+    }
+    const spaceRows = (spacesResult.data ?? []) as Space[]
+    const spaceIds = spaceRows.map((s) => s.id)
 
-      const holdsResult = spaceIds.length
-        ? await supabase
-            .from('space_holds')
-            .select('space_id, hold_type, during, reservation_id')
-            .in('space_id', spaceIds)
-            .is('released_at', null)
-        : { data: [], error: null }
+    const holdsResult = spaceIds.length
+      ? await supabase
+          .from('space_holds')
+          .select('space_id, hold_type, during, reservation_id')
+          .in('space_id', spaceIds)
+          .is('released_at', null)
+      : { data: [], error: null }
 
-      if (holdsResult.error) {
-        setError(friendlyError(holdsResult.error, 'Holds could not be loaded.'))
-        setLoading(false)
-        return
-      }
-      const holdRows = (holdsResult.data ?? []) as Hold[]
+    if (holdsResult.error) {
+      setError(friendlyError(holdsResult.error, 'Holds could not be loaded.'))
+      setLoading(false)
+      return
+    }
+    const holdRows = (holdsResult.data ?? []) as Hold[]
 
-      // Reservation status (occupied vs reserved) + occupant name come from the
-      // reservations these holds reference. Only reservation-type holds matter.
-      const reservationIds = [
-        ...new Set(
-          holdRows
-            .filter((h) => h.reservation_id)
-            .map((h) => h.reservation_id as string),
-        ),
-      ]
-      const resResult = reservationIds.length
-        ? await supabase
-            .from('reservations')
-            .select('id, status, customer_id')
-            .in('id', reservationIds)
-        : { data: [], error: null }
+    // Reservation status (occupied vs reserved) + occupant name come from the
+    // reservations these holds reference. Only reservation-type holds matter.
+    const reservationIds = [
+      ...new Set(
+        holdRows
+          .filter((h) => h.reservation_id)
+          .map((h) => h.reservation_id as string),
+      ),
+    ]
+    const resResult = reservationIds.length
+      ? await supabase
+          .from('reservations')
+          .select('id, status, customer_id')
+          .in('id', reservationIds)
+      : { data: [], error: null }
 
-      if (resResult.error) {
-        setError(
-          friendlyError(resResult.error, 'Reservations could not be loaded.'),
-        )
-        setLoading(false)
-        return
-      }
-      const resRows = (resResult.data ?? []) as {
-        id: string
-        status: string
-        customer_id: string
-      }[]
-      const customerIds = [...new Set(resRows.map((r) => r.customer_id))]
-      const custResult = customerIds.length
-        ? await supabase.from('customers').select('id, full_name').in('id', customerIds)
-        : { data: [], error: null }
-
-      if (custResult.error) {
-        setError(friendlyError(custResult.error, 'Customers could not be loaded.'))
-        setLoading(false)
-        return
-      }
-      const custName = new Map(
-        (custResult.data ?? []).map((c) => [c.id, c.full_name as string]),
-      )
-      const resStatus = new Map(resRows.map((r) => [r.id, r.status]))
-      const occupant = new Map(
-        resRows.map((r) => [r.id, custName.get(r.customer_id) ?? 'Unknown']),
-      )
-
-      // Aggregates + lists straight from the Week 11 RPCs (facility-local time).
-      const [summary, arr, dep, over] = await Promise.all([
-        supabase.rpc('facility_dashboard_summary', { p_facility_id: id }),
-        supabase.rpc('facility_today_arrivals', { p_facility_id: id }),
-        supabase.rpc('facility_today_departures', { p_facility_id: id }),
-        supabase.rpc('facility_overstays', { p_facility_id: id }),
-      ])
-
-      const firstError =
-        summary.error ?? arr.error ?? dep.error ?? over.error ?? null
-      if (firstError) {
-        setError(friendlyError(firstError, 'Dashboard metrics could not be loaded.'))
-        setLoading(false)
-        return
-      }
-
-      setZones(zoneRows)
-      setSpaces(spaceRows)
-      setHolds(holdRows)
-      setReservationStatus(resStatus)
-      setOccupantByReservation(occupant)
-      setRevenueCents(Number(summary.data?.[0]?.today_revenue_cents ?? 0))
-      setArrivals(
-        (arr.data ?? []).map((r: Record<string, unknown>) => ({
-          reservation_id: r.reservation_id as string,
-          space_number: r.space_number as string,
-          zone_name: r.zone_name as string,
-          customer_name: r.customer_name as string,
-          when: r.checked_in_at as string,
-          during: r.during as string,
-        })),
-      )
-      setDepartures(
-        (dep.data ?? []).map((r: Record<string, unknown>) => ({
-          reservation_id: r.reservation_id as string,
-          space_number: r.space_number as string,
-          zone_name: r.zone_name as string,
-          customer_name: r.customer_name as string,
-          when: r.checked_out_at as string,
-          during: r.during as string,
-        })),
-      )
-      setOverstays(
-        (over.data ?? []).map((r: Record<string, unknown>) => ({
-          reservation_id: r.reservation_id as string,
-          space_number: r.space_number as string,
-          zone_name: r.zone_name as string,
-          customer_name: r.customer_name as string,
-          when: r.checked_in_at as string,
-          during: r.during as string,
-          ends_at: r.ends_at as string,
-        })),
+    if (resResult.error) {
+      setError(
+        friendlyError(resResult.error, 'Reservations could not be loaded.'),
       )
       setLoading(false)
-    },
-    [],
-  )
+      return
+    }
+    const resRows = (resResult.data ?? []) as {
+      id: string
+      status: string
+      customer_id: string
+    }[]
+    const customerIds = [...new Set(resRows.map((r) => r.customer_id))]
+    const custResult = customerIds.length
+      ? await supabase
+          .from('customers')
+          .select('id, full_name')
+          .in('id', customerIds)
+      : { data: [], error: null }
+
+    if (custResult.error) {
+      setError(
+        friendlyError(custResult.error, 'Customers could not be loaded.'),
+      )
+      setLoading(false)
+      return
+    }
+    const custName = new Map(
+      (custResult.data ?? []).map((c) => [c.id, c.full_name as string]),
+    )
+    const resStatus = new Map(resRows.map((r) => [r.id, r.status]))
+    const occupant = new Map(
+      resRows.map((r) => [r.id, custName.get(r.customer_id) ?? 'Unknown']),
+    )
+
+    // Aggregates + lists straight from the Week 11 RPCs (facility-local time).
+    const [summary, arr, dep, over] = await Promise.all([
+      supabase.rpc('facility_dashboard_summary', { p_facility_id: id }),
+      supabase.rpc('facility_today_arrivals', { p_facility_id: id }),
+      supabase.rpc('facility_today_departures', { p_facility_id: id }),
+      supabase.rpc('facility_overstays', { p_facility_id: id }),
+    ])
+
+    const firstError =
+      summary.error ?? arr.error ?? dep.error ?? over.error ?? null
+    if (firstError) {
+      setError(
+        friendlyError(firstError, 'Dashboard metrics could not be loaded.'),
+      )
+      setLoading(false)
+      return
+    }
+
+    setZones(zoneRows)
+    setSpaces(spaceRows)
+    setHolds(holdRows)
+    setReservationStatus(resStatus)
+    setOccupantByReservation(occupant)
+    const revenueRow = summary.data?.[0]
+    setRevenue({
+      total: Number(revenueRow?.today_revenue_cents ?? 0),
+      stripe: Number(revenueRow?.today_stripe_revenue_cents ?? 0),
+      cash: Number(revenueRow?.today_booth_cash_revenue_cents ?? 0),
+      boothCard: Number(revenueRow?.today_booth_card_revenue_cents ?? 0),
+    })
+    setArrivals(
+      (arr.data ?? []).map((r: Record<string, unknown>) => ({
+        reservation_id: r.reservation_id as string,
+        space_number: r.space_number as string,
+        zone_name: r.zone_name as string,
+        customer_name: r.customer_name as string,
+        when: r.checked_in_at as string,
+        during: r.during as string,
+      })),
+    )
+    setDepartures(
+      (dep.data ?? []).map((r: Record<string, unknown>) => ({
+        reservation_id: r.reservation_id as string,
+        space_number: r.space_number as string,
+        zone_name: r.zone_name as string,
+        customer_name: r.customer_name as string,
+        when: r.checked_out_at as string,
+        during: r.during as string,
+      })),
+    )
+    setOverstays(
+      (over.data ?? []).map((r: Record<string, unknown>) => ({
+        reservation_id: r.reservation_id as string,
+        space_number: r.space_number as string,
+        zone_name: r.zone_name as string,
+        customer_name: r.customer_name as string,
+        when: r.checked_in_at as string,
+        during: r.during as string,
+        ends_at: r.ends_at as string,
+      })),
+    )
+    setLoading(false)
+  }, [])
 
   useEffect(() => {
     if (facilityId) void Promise.resolve().then(() => loadFacility(facilityId))
@@ -292,12 +313,22 @@ function Occupancy() {
       .channel(`occupancy-${facilityId}`)
       .on(
         'postgres_changes',
-        { event: '*', schema: 'public', table: 'space_holds', filter: `org_id=eq.${orgId}` },
+        {
+          event: '*',
+          schema: 'public',
+          table: 'space_holds',
+          filter: `org_id=eq.${orgId}`,
+        },
         debounced,
       )
       .on(
         'postgres_changes',
-        { event: '*', schema: 'public', table: 'spaces', filter: `org_id=eq.${orgId}` },
+        {
+          event: '*',
+          schema: 'public',
+          table: 'spaces',
+          filter: `org_id=eq.${orgId}`,
+        },
         debounced,
       )
       .subscribe()
@@ -338,14 +369,11 @@ function Occupancy() {
   // uses, so this matches the SQL on load and then tracks live edits.
   const total = spaces.length
   const heldNow = useMemo(
-    () =>
-      spaces.reduce(
-        (n, s) => n + (activeHoldBySpace.has(s.id) ? 1 : 0),
-        0,
-      ),
+    () => spaces.reduce((n, s) => n + (activeHoldBySpace.has(s.id) ? 1 : 0), 0),
     [spaces, activeHoldBySpace],
   )
-  const occupancyPct = total === 0 ? 0 : Math.round((heldNow / total) * 1000) / 10
+  const occupancyPct =
+    total === 0 ? 0 : Math.round((heldNow / total) * 1000) / 10
 
   const spacesByZone = useMemo(() => {
     const map = new Map<string, Space[]>()
@@ -404,12 +432,20 @@ function Occupancy() {
 
       {/* Glanceable numbers (§18). Static-per-refresh counts — no sparklines. */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-        <StatTile label="Occupied" value={`${heldNow} / ${total}`} hint="spaces held now" />
-        <StatTile label="Occupancy" value={`${occupancyPct}%`} hint="of active spaces" />
+        <StatTile
+          label="Occupied"
+          value={`${heldNow} / ${total}`}
+          hint="spaces held now"
+        />
+        <StatTile
+          label="Occupancy"
+          value={`${occupancyPct}%`}
+          hint="of active spaces"
+        />
         <StatTile
           label="Today's revenue"
-          value={dollars(revenueCents)}
-          hint="succeeded payments, facility-local day"
+          value={dollars(revenue.total)}
+          hint={`online ${dollars(revenue.stripe)} · cash ${dollars(revenue.cash)} · booth card ${dollars(revenue.boothCard)}`}
         />
       </div>
 
@@ -431,8 +467,12 @@ function Occupancy() {
                 <SelectedDetail
                   space={selectedSpace}
                   zoneName={zoneById.get(selectedSpace.zone_id)?.name ?? '—'}
-                  status={tileStatusBySpace.get(selectedSpace.id) ?? 'available'}
-                  occupant={activeHoldBySpace.get(selectedSpace.id)?.occupant ?? null}
+                  status={
+                    tileStatusBySpace.get(selectedSpace.id) ?? 'available'
+                  }
+                  occupant={
+                    activeHoldBySpace.get(selectedSpace.id)?.occupant ?? null
+                  }
                   onClose={() => setSelectedSpaceId(null)}
                 />
               )}
@@ -661,8 +701,12 @@ function ListCard({
                 className="flex items-baseline justify-between gap-2 text-sm"
               >
                 <span>
-                  <span className="font-medium tabular-nums">{row.space_number}</span>{' '}
-                  <span className="text-muted-foreground">{row.customer_name}</span>
+                  <span className="font-medium tabular-nums">
+                    {row.space_number}
+                  </span>{' '}
+                  <span className="text-muted-foreground">
+                    {row.customer_name}
+                  </span>
                 </span>
                 <span className="whitespace-nowrap text-xs text-muted-foreground">
                   {timeLabel} {shortTime(row.when)}
@@ -680,5 +724,8 @@ function shortTime(iso: string | null) {
   if (!iso) return '—'
   const date = new Date(iso)
   if (Number.isNaN(date.getTime())) return '—'
-  return date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
+  return date.toLocaleTimeString(undefined, {
+    hour: 'numeric',
+    minute: '2-digit',
+  })
 }

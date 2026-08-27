@@ -17,9 +17,10 @@ begin
      and tablename in ('organizations','profiles','memberships','facilities',
                        'zones','spaces','customers','vehicles','reservations',
                        'permits','price_rules','space_holds','invites','audit_log',
-                       'payments','processed_stripe_events','vehicle_photos');
-  if v <> 17 then
-    raise exception 'CHECK0 FAIL: expected 17 RLS-enabled tables, found %', v;
+                       'payments','processed_stripe_events','vehicle_photos',
+                       'booth_payments');
+  if v <> 18 then
+    raise exception 'CHECK0 FAIL: expected 18 RLS-enabled tables, found %', v;
   end if;
 
   -- 36 through Week 4, +1 in Week 5 (space_holds_update for release-early),
@@ -28,10 +29,12 @@ begin
   -- +1 in Week 8 (audit_log_select), +2 in Week 9 (payments SELECT for
   -- members and owners; processed_stripe_events intentionally has none),
   -- +2 in Week 10 (vehicle_photos SELECT for members, INSERT for staff),
-  -- +2 in Week 12 (permit own SELECT and staff UPDATE).
+  -- +2 in Week 12 (permit own SELECT and staff UPDATE),
+  -- +3 for account deactivation (account_status), which this count had drifted
+  -- behind, and +2 for booth_payments (SELECT for members, SELECT for owners).
   select count(*) into v from pg_policies where schemaname = 'public';
-  if v <> 54 then
-    raise exception 'CHECK0 FAIL: expected 54 policies, found %', v;
+  if v <> 59 then
+    raise exception 'CHECK0 FAIL: expected 59 policies, found %', v;
   end if;
 
   select count(*) into v

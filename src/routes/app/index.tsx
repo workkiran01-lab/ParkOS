@@ -47,6 +47,9 @@ type Summary = {
   held_now: number
   occupancy_pct: number
   today_revenue_cents: number
+  today_stripe_revenue_cents: number
+  today_booth_cash_revenue_cents: number
+  today_booth_card_revenue_cents: number
 }
 type Zone = { id: string; name: string; level: number | null }
 type Space = {
@@ -211,6 +214,9 @@ function DashboardView() {
         held_now: 0,
         occupancy_pct: 0,
         today_revenue_cents: 0,
+        today_stripe_revenue_cents: 0,
+        today_booth_cash_revenue_cents: 0,
+        today_booth_card_revenue_cents: 0,
       },
     )
     setZones(zoneRows)
@@ -431,7 +437,11 @@ function DashboardView() {
                 : dollars(summary?.today_revenue_cents ?? 0)}
             </NumberFeedback>
           }
-          hint="Succeeded payments today"
+          hint={
+            summary
+              ? `Online ${dollars(summary.today_stripe_revenue_cents)} · Cash ${dollars(summary.today_booth_cash_revenue_cents)} · Booth card ${dollars(summary.today_booth_card_revenue_cents)}`
+              : 'Awaiting payment data'
+          }
           icon={CircleDollarSign}
           tone="revenue"
         />
