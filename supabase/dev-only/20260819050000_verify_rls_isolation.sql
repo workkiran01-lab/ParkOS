@@ -4,9 +4,13 @@
 -- RAISES EXCEPTION on failure, so a failed check aborts execution with its message.
 --
 -- Depends on the dev seed (20260819040100); like the seed, dev-project only.
+-- Every check runs inside one transaction that is unconditionally rolled back;
+-- the final summary runs afterwards so the Management API returns visible proof.
+
+begin;
 
 -- ---------------------------------------------------------------------------
--- CHECK 0: the DDL actually landed — 17 RLS-enabled tables, 52 policies,
+-- CHECK 0: the DDL actually landed — 20 RLS-enabled tables, 59 policies,
 -- all authorization/bootstrap/lifecycle functions present and SECURITY DEFINER.
 -- ---------------------------------------------------------------------------
 do $$
@@ -18,9 +22,9 @@ begin
                        'zones','spaces','customers','vehicles','reservations',
                        'permits','price_rules','space_holds','invites','audit_log',
                        'payments','processed_stripe_events','vehicle_photos',
-                       'booth_payments');
-  if v <> 18 then
-    raise exception 'CHECK0 FAIL: expected 18 RLS-enabled tables, found %', v;
+                       'booth_payments','receipts','account_status');
+  if v <> 20 then
+    raise exception 'CHECK0 FAIL: expected 20 RLS-enabled tables, found %', v;
   end if;
 
   -- 36 through Week 4, +1 in Week 5 (space_holds_update for release-early),
@@ -65,7 +69,7 @@ begin
   if v <> 1 then
     raise exception 'CHECK0 FAIL: is_own_customer missing or wrongly SECURITY DEFINER';
   end if;
-  raise notice 'CHECK0 PASS: 17 RLS tables, 54 policies, 23 SECURITY DEFINER functions';
+  raise notice 'CHECK0 PASS: 20 RLS tables, 59 policies, 23 SECURITY DEFINER functions';
 end $$;
 
 -- ---------------------------------------------------------------------------
@@ -1254,11 +1258,13 @@ begin
   raise notice 'CHECK12 PASS: permit roles/RLS isolated; active permit blocks reservations; cancel releases hold';
 end $$;
 
+rollback;
+
 -- The Management API suppresses RAISE NOTICE output. If every assertion above
 -- completes, return an explicit, machine-visible summary for CI/manual evidence.
 select check_name, result
 from (values
-  ('CHECK0',  'PASS: 17 RLS tables, 54 policies, 23 SECURITY DEFINER functions'),
+  ('CHECK0',  'PASS: 20 RLS tables, 59 policies, 23 SECURITY DEFINER functions'),
   ('CHECK0b', 'PASS: authenticated has normal DML grants; permits is SELECT-only'),
   ('CHECK0c', 'PASS: payment writes and Stripe event processing are service-role-only'),
   ('CHECK1',  'PASS: Org A sees exactly 2 facilities / 165 spaces, all Org A'),
