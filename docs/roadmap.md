@@ -32,10 +32,17 @@ first — this file tracks work, not architecture.
   `facility_overstays`, `facility_dashboard_summary`, `reservation_balance_cents`, and
   `record_booth_payment` all carry `anon=X/postgres`. Nothing leaks today — the SECURITY INVOKER
   ones return zero rows to a role with no membership, and `record_booth_payment` rejects an anon
-  caller in its own role check — so this is a defense-in-depth and truth-in-comments gap, not an
-  active hole. `record_booth_payment` is the one to fix first: it is SECURITY DEFINER and takes
-  money. `facility_daily_manifest` is already fixed (`20260826020000`); the rest need
-  `revoke execute ... from anon` in their own migration, plus corrected comments.
+  caller in its own role check — so this was a defense-in-depth and truth-in-comments gap, not an
+  active hole. **Resolved** for all seven known functions: `facility_daily_manifest` in
+  `20260826020000`, the other six in `20260826030000`, each verified `anon_exec = false` with
+  `anon` absent from the raw ACL. The real access model now lives in `COMMENT ON FUNCTION` rather
+  than in migration headers, because the headers that assert "No anon access" are in already-applied
+  files and cannot be edited without making the repo disagree with what ran.
+  **Still open:** the underlying `ALTER DEFAULT PRIVILEGES` is unchanged, so every function added
+  from here gets `anon` EXECUTE again at creation. `revoke ... from public` will not stop it — new
+  migrations must `revoke execute ... from anon` explicitly, and nothing currently enforces that.
+  A guard in `scripts/` (in the spirit of the SQL special-form check) or a periodic ACL audit query
+  would catch a regression; neither exists yet.
 - **Two timezone conventions coexist in SQL, and the Daily Manifest can disagree with the
   dashboard.** The `occupancy_dashboard` family (`facility_today_arrivals`,
   `facility_today_departures`, `facility_dashboard_summary`) bins by `f.timezone` directly, which
