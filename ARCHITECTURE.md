@@ -142,11 +142,13 @@ against this file before being added:
 - Gate hardware integration
 - Native mobile apps
 
-## In-person payment collection: recording implemented, reporting pending
+## In-person payment collection and reporting implemented
 
 Decision #8 and migration `20260825010000_booth_payments.sql` resolve the structural collection
-gap in the schema and application code. The migration still has to be applied explicitly in each
-environment; committing it does not deploy it.
+gap in the schema and application code. Migration `20260826000000_booth_revenue_reporting.sql`
+adds booth cash and card-terminal collections to the dashboard and revenue reports without
+double-counting mixed-payment reservations. Migrations still have to be applied explicitly in each
+environment; committing them does not deploy them.
 
 Walk-in and drive-up parking had no payment collection path. Three structural blockers, each
 sufficient on its own:
@@ -169,10 +171,10 @@ It now prices the overstay itself and can collect the balance in the same transa
 The booth surface is `/checkin/{booking_code}` — the URL already printed as a QR on every
 receipt, which until now had no route behind it.
 
-One functional gap remains: `facility_dashboard_summary` and the `report_*` revenue functions
-still sum only Stripe-backed `payments`. Until a follow-up reporting migration includes
-`booth_payments` without double-counting mixed-payment reservations, cash and card-terminal money
-is recorded and auditable but absent from dashboard and report revenue totals.
+`facility_dashboard_summary` and the `report_*` revenue functions combine Stripe-backed
+`payments` with `booth_payments`, while exposing separate online, booth-cash, and booth-card
+breakdowns. Cash and card-terminal collections are therefore included in dashboard and report
+revenue totals.
 
 ## Known gap: permit subscription payments are not recorded
 
@@ -185,7 +187,7 @@ Monthly permits bill successfully through Stripe, and ParkOS keeps no record of 
 
 There is no permit invoice or payment table anywhere. Permits carry a `stripe_subscription_id`,
 a `monthly_rate_cents`, and period bounds — an expectation of billing, never a record of it.
-On parkos-dev, 4 active permit subscriptions bill monthly with zero corresponding record.
+Permit subscriptions can bill monthly with no corresponding payment record in ParkOS.
 
 This is separate from the in-person reporting gap above, and arguably more urgent. Walk-in money
 now has a recording path; permit billing works, is actively selling, and generates real revenue

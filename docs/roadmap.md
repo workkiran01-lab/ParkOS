@@ -41,11 +41,12 @@ first — this file tracks work, not architecture.
   `anon` absent from the raw ACL. The real access model now lives in `COMMENT ON FUNCTION` rather
   than in migration headers, because the headers that assert "No anon access" are in already-applied
   files and cannot be edited without making the repo disagree with what ran.
-  **Still open:** the underlying `ALTER DEFAULT PRIVILEGES` is unchanged, so every function added
-  from here gets `anon` EXECUTE again at creation. `revoke ... from public` will not stop it — new
-  migrations must `revoke execute ... from anon` explicitly, and nothing currently enforces that.
-  A guard in `scripts/` (in the spirit of the SQL special-form check) or a periodic ACL audit query
-  would catch a regression; neither exists yet.
+  **Resolved for repo-owned functions:** `20260826040000_revoke_anon_default_and_sweep.sql` revokes
+  `anon` EXECUTE from the `postgres` default function privileges and sweeps existing
+  `postgres`-owned functions except the deliberate public allowlist. The separate
+  `supabase_admin` default ACL cannot be changed by migrations running as `postgres`, but ParkOS
+  does not create functions under that owner. `npm run test:acl` audits the linked database and
+  fails if an unexpected public function is executable by `anon`.
 - **The same default privileges grant `anon` full DML on every new table in `public`, and RLS is
   the only thing stopping it. UNMITIGATED.** The `ALTER DEFAULT PRIVILEGES` behind the function
   issue above is not limited to functions. Confirmed on parkos-dev, for both the `postgres` and
@@ -84,13 +85,13 @@ first — this file tracks work, not architecture.
   raises `22023` on an unusable value. The `reporting_functions` family and the newer
   `facility_daily_manifest` bin by `public.safe_timezone(f.timezone)`, which falls back to UTC so
   one bad facility cannot take down a whole query. Consequence: for a facility whose timezone
-  string is malformed, the manifest bins by UTC while the dashboard's arrivals card does something
-  else, and the two surfaces show different days. This is live, not theoretical — the duplicate
-  "Sol city" above has `Pacific`, and on 2026-08-26 its manifest "today" was 2026-08-27 while every
-  correctly-configured facility's was 2026-08-26. **Deliberate, not fixed.** The manifest chose
-  `safe_timezone` as the safer of the two rather than propagate the raising version; converging the
-  dashboard family onto `safe_timezone` is the real fix and is its own migration. Do not treat the
-  divergence as a manifest bug.
+  string is malformed, the manifest bins by UTC while the dashboard's arrivals card raises an
+  error. Before the duplicate "Sol city" facility was corrected from `Pacific` to
+  `America/Los_Angeles` on 2026-08-26, its manifest "today" was 2026-08-27 while every
+  correctly-configured facility's was 2026-08-26. No invalid facility timezone is currently known,
+  but the two SQL conventions still diverge if another malformed value is stored. The manifest
+  chose `safe_timezone` as the safer behavior; converging the dashboard family onto
+  `safe_timezone` remains the durable fix and requires its own migration.
 - **No back/breadcrumb navigation anywhere in the staff app** (`/app/*`). Noticed during testing.
   A real UX gap, not yet scoped.
 - **Multi-role login edge cases.** One auth user holding both a staff membership and a customer
