@@ -40,6 +40,12 @@ type RevenueRow = {
   payments_count: number
   revenue_cents: number
   refunded_count: number
+  stripe_payments_count: number
+  stripe_revenue_cents: number
+  booth_cash_payments_count: number
+  booth_cash_revenue_cents: number
+  booth_card_payments_count: number
+  booth_card_revenue_cents: number
 }
 type OccupancyRow = {
   bucket: string
@@ -57,10 +63,19 @@ type SpaceTypeRow = {
   space_type: string
   payments_count: number
   revenue_cents: number
+  stripe_payments_count: number
+  stripe_revenue_cents: number
+  booth_cash_payments_count: number
+  booth_cash_revenue_cents: number
+  booth_card_payments_count: number
+  booth_card_revenue_cents: number
 }
 type SplitRow = {
   category: string
   revenue_cents: number | null
+  stripe_revenue_cents: number | null
+  booth_cash_revenue_cents: number | null
+  booth_card_revenue_cents: number | null
   recorded: boolean
   note: string | null
 }
@@ -197,6 +212,12 @@ function Reports() {
         payments_count: num(r.payments_count),
         revenue_cents: num(r.revenue_cents),
         refunded_count: num(r.refunded_count),
+        stripe_payments_count: num(r.stripe_payments_count),
+        stripe_revenue_cents: num(r.stripe_revenue_cents),
+        booth_cash_payments_count: num(r.booth_cash_payments_count),
+        booth_cash_revenue_cents: num(r.booth_cash_revenue_cents),
+        booth_card_payments_count: num(r.booth_card_payments_count),
+        booth_card_revenue_cents: num(r.booth_card_revenue_cents),
       })),
     )
     setOccupancy(
@@ -223,12 +244,28 @@ function Reports() {
         space_type: r.space_type,
         payments_count: num(r.payments_count),
         revenue_cents: num(r.revenue_cents),
+        stripe_payments_count: num(r.stripe_payments_count),
+        stripe_revenue_cents: num(r.stripe_revenue_cents),
+        booth_cash_payments_count: num(r.booth_cash_payments_count),
+        booth_cash_revenue_cents: num(r.booth_cash_revenue_cents),
+        booth_card_payments_count: num(r.booth_card_payments_count),
+        booth_card_revenue_cents: num(r.booth_card_revenue_cents),
       })),
     )
     setSplit(
       (sp.data ?? []).map((r: SplitRow) => ({
         category: r.category,
         revenue_cents: r.revenue_cents === null ? null : num(r.revenue_cents),
+        stripe_revenue_cents:
+          r.stripe_revenue_cents === null ? null : num(r.stripe_revenue_cents),
+        booth_cash_revenue_cents:
+          r.booth_cash_revenue_cents === null
+            ? null
+            : num(r.booth_cash_revenue_cents),
+        booth_card_revenue_cents:
+          r.booth_card_revenue_cents === null
+            ? null
+            : num(r.booth_card_revenue_cents),
         recorded: Boolean(r.recorded),
         note: r.note,
       })),
@@ -242,8 +279,17 @@ function Reports() {
     if (!roleLoading) void Promise.resolve().then(load)
   }, [load, roleLoading])
 
-  const totalCents = useMemo(
-    () => revenue.reduce((sum, row) => sum + row.revenue_cents, 0),
+  const revenueTotals = useMemo(
+    () =>
+      revenue.reduce(
+        (sum, row) => ({
+          total: sum.total + row.revenue_cents,
+          stripe: sum.stripe + row.stripe_revenue_cents,
+          cash: sum.cash + row.booth_cash_revenue_cents,
+          boothCard: sum.boothCard + row.booth_card_revenue_cents,
+        }),
+        { total: 0, stripe: 0, cash: 0, boothCard: 0 },
+      ),
     [revenue],
   )
 
@@ -376,13 +422,28 @@ function Reports() {
       {error && <p className="text-sm text-destructive">{error}</p>}
 
       {/* Top-line numbers */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
         <StatTile
           label="Total revenue"
-          value={dollars(totalCents)}
+          value={dollars(revenueTotals.total)}
           hint={
             loading ? 'Loading…' : 'Settled reservation payments, hourly only'
           }
+        />
+        <StatTile
+          label="Online card"
+          value={dollars(revenueTotals.stripe)}
+          hint="Stripe-confirmed collection"
+        />
+        <StatTile
+          label="Booth cash"
+          value={dollars(revenueTotals.cash)}
+          hint="Cash recorded by staff"
+        />
+        <StatTile
+          label="Booth card"
+          value={dollars(revenueTotals.boothCard)}
+          hint="Card-terminal collection recorded by staff"
         />
         <StatTile
           label="Avg reservation"
@@ -406,6 +467,30 @@ function Reports() {
             { header: 'Payments', value: (r) => r.payments_count },
             { header: 'Revenue (cents)', value: (r) => r.revenue_cents },
             { header: 'Revenue', value: (r) => dollars(r.revenue_cents) },
+            {
+              header: 'Online payments',
+              value: (r) => r.stripe_payments_count,
+            },
+            {
+              header: 'Online revenue (cents)',
+              value: (r) => r.stripe_revenue_cents,
+            },
+            {
+              header: 'Booth cash payments',
+              value: (r) => r.booth_cash_payments_count,
+            },
+            {
+              header: 'Booth cash revenue (cents)',
+              value: (r) => r.booth_cash_revenue_cents,
+            },
+            {
+              header: 'Booth card payments',
+              value: (r) => r.booth_card_payments_count,
+            },
+            {
+              header: 'Booth card revenue (cents)',
+              value: (r) => r.booth_card_revenue_cents,
+            },
             { header: 'Refunded payments', value: (r) => r.refunded_count },
           ])
         }
@@ -454,6 +539,30 @@ function Reports() {
             { header: 'Payments', value: (r) => r.payments_count },
             { header: 'Revenue (cents)', value: (r) => r.revenue_cents },
             { header: 'Revenue', value: (r) => dollars(r.revenue_cents) },
+            {
+              header: 'Online payments',
+              value: (r) => r.stripe_payments_count,
+            },
+            {
+              header: 'Online revenue (cents)',
+              value: (r) => r.stripe_revenue_cents,
+            },
+            {
+              header: 'Booth cash payments',
+              value: (r) => r.booth_cash_payments_count,
+            },
+            {
+              header: 'Booth cash revenue (cents)',
+              value: (r) => r.booth_cash_revenue_cents,
+            },
+            {
+              header: 'Booth card payments',
+              value: (r) => r.booth_card_payments_count,
+            },
+            {
+              header: 'Booth card revenue (cents)',
+              value: (r) => r.booth_card_revenue_cents,
+            },
           ])
         }
       >
@@ -477,6 +586,11 @@ function Reports() {
                     </span>
                   </span>
                 </div>
+                <p className="text-xs text-muted-foreground">
+                  Online {dollars(row.stripe_revenue_cents)} · cash{' '}
+                  {dollars(row.booth_cash_revenue_cents)} · booth card{' '}
+                  {dollars(row.booth_card_revenue_cents)}
+                </p>
                 <div className="h-2 overflow-hidden rounded-full bg-muted">
                   <div
                     className="h-full rounded-full bg-primary"
@@ -506,6 +620,18 @@ function Reports() {
               header: 'Revenue',
               value: (r) => (r.recorded ? dollars(r.revenue_cents ?? 0) : ''),
             },
+            {
+              header: 'Online revenue (cents)',
+              value: (r) => (r.recorded ? r.stripe_revenue_cents : ''),
+            },
+            {
+              header: 'Booth cash revenue (cents)',
+              value: (r) => (r.recorded ? r.booth_cash_revenue_cents : ''),
+            },
+            {
+              header: 'Booth card revenue (cents)',
+              value: (r) => (r.recorded ? r.booth_card_revenue_cents : ''),
+            },
             { header: 'Recorded', value: (r) => String(r.recorded) },
             { header: 'Note', value: (r) => r.note ?? '' },
           ])
@@ -513,7 +639,14 @@ function Reports() {
       >
         <dl className="space-y-4">
           <div className="flex items-baseline justify-between gap-4">
-            <dt className="text-sm font-medium">Hourly &amp; walk-in</dt>
+            <dt className="text-sm font-medium">
+              Hourly &amp; walk-in
+              <p className="mt-1 text-xs font-normal text-muted-foreground">
+                Online {dollars(hourly?.stripe_revenue_cents ?? 0)} · cash{' '}
+                {dollars(hourly?.booth_cash_revenue_cents ?? 0)} · booth card{' '}
+                {dollars(hourly?.booth_card_revenue_cents ?? 0)}
+              </p>
+            </dt>
             <dd className="text-lg font-semibold tabular-nums">
               {dollars(hourly?.revenue_cents ?? 0)}
             </dd>
