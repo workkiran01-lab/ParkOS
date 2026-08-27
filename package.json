@@ -9,6 +9,7 @@
     "test": "npm run check:sql && node --test \"scripts/**/*.test.mjs\" \"src/**/*.test.ts\" \"supabase/functions/**/*.test.ts\"",
     "test:sql-guard": "npm run check:sql && node --test scripts/check-sql-special-forms.test.mjs",
     "test:db": "supabase db query --linked --file supabase/dev-only/20260825010000_verify_booth_payments.sql",
+    "test:acl": "supabase db query --linked --file supabase/dev-only/verify_no_anon_execute.sql",
     "check:sql": "node scripts/check-sql-special-forms.mjs",
     "lint": "eslint .",
     "format": "prettier --write .",
