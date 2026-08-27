@@ -2,7 +2,7 @@
 
 This file is the **source of truth for all schema and data-modeling decisions**. Nothing
 elsewhere in the codebase — migrations, application code, docs — should contradict it. When a
-decision here proves wrong, change it *here first*, then reconcile the code.
+decision here proves wrong, change it _here first_, then reconcile the code.
 
 ## Core Decisions
 
@@ -68,11 +68,15 @@ ParkOS v1 collects reservation payments into the platform Stripe account through
 Checkout. Stripe Connect and operator payouts are later decisions, not implicit parts of this
 model.
 
-The initial pending payment attempt is created only by a trusted server function. After that,
-payment status changes only from signature-verified Stripe webhooks running with the service
-role; browser clients never insert or update payment state. Webhook event claiming and the
-corresponding payment/reservation transition happen in one database transaction so a retry can
-never be acknowledged before its state change commits.
+The initial pending Stripe payment attempt is created only by a trusted server function. After
+that, Stripe payment status changes only from signature-verified Stripe webhooks running with the
+service role; browser clients never insert or update Stripe payment state. Webhook event claiming
+and the corresponding payment/reservation transition happen in one database transaction so a
+retry can never be acknowledged before its state change commits.
+
+The one sanctioned non-webhook reservation-payment path is in-person collection under Decision
+#8. It writes a separate ledger through a role-checked trusted RPC; it does not relax any of the
+rules above for Stripe-backed `payments` rows.
 
 Payment records are financial history: clients cannot delete them, and application workflows do
 not archive or hard-delete them.
@@ -93,6 +97,26 @@ failed, or cancelled a subscription.
 The initial subscription uses a permit-specific recurring Stripe Price and Stripe's hosted invoice
 payment page. Stripe Connect, pooled/unassigned permits, proration controls, and usage-based billing
 remain later decisions.
+
+### 8. In-person payments: separate ledger through a trusted booth RPC
+
+Cash and card-terminal payments collected by staff are stored in `booth_payments`, not in
+`payments`. The Stripe ledger deliberately requires `stripe_checkout_session_id` and permits
+lifecycle changes only from verified provider events. Making those fields nullable or adding a
+browser-written method discriminator would weaken the invariants that make a `payments` row proof
+of Stripe activity. A separate ledger keeps the two kinds of evidence explicit: Stripe confirms
+online money; an identified staff member attests to money taken at the booth.
+
+`record_booth_payment` is the only application write path. It is `SECURITY DEFINER` so it can write
+while authenticated clients retain no direct `INSERT`, `UPDATE`, or `DELETE` grant or policy on
+the table. The function requires an authenticated `admin`, `manager`, or `attendant` in the
+reservation's organization, locks the reservation while checking its balance, rejects
+over-collection, records `collected_by`, and writes an audit-log entry.
+
+This is a narrow exception to Decision #6's webhook-only rule: it applies only to in-person rows in
+`booth_payments`. It does not allow clients or staff RPCs to create or mutate Stripe-backed
+`payments` rows. Booth-payment records are financial history and are neither archived nor deleted
+by application workflows.
 
 ## Reference Operator
 
@@ -118,29 +142,37 @@ against this file before being added:
 - Gate hardware integration
 - Native mobile apps
 
-## Known gap: in-person payment collection
+## In-person payment collection: recording implemented, reporting pending
 
-Distinct from the list above. This was never a deliberate exclusion — it is an omission found
-during verification, and it needs a decision rather than a default.
+Decision #8 and migration `20260825010000_booth_payments.sql` resolve the structural collection
+gap in the schema and application code. The migration still has to be applied explicitly in each
+environment; committing it does not deploy it.
 
-Walk-in and drive-up parking has no payment collection path today. Three structural blockers,
-each sufficient on its own:
+Walk-in and drive-up parking had no payment collection path. Three structural blockers, each
+sufficient on its own:
 
 - `create-checkout-session` rejects any reservation whose status is not `pending`, while
   `check_in_walk_in` moves a reservation from `pending` to `active` inside a single
   transaction. A walk-in is therefore never observably payable through the existing Stripe
-  flow, even if the booth UI offered a button.
+  flow, even if the booth UI offered a button. — Still true, and now moot: booth collection does
+  not route through Stripe Checkout at all.
 - `payments.stripe_checkout_session_id` is `NOT NULL`, and the table has no `method` or
-  `collected_by` column. A cash or card-terminal payment cannot be recorded at all.
+  `collected_by` column. A cash or card-terminal payment cannot be recorded at all. — Closed by
+  `booth_payments`.
 - Decision #6 restricts payment-state writes to signature-verified Stripe webhooks. In-person
-  collection has no way to originate such a write.
+  collection has no way to originate such a write. — Closed by `record_booth_payment`.
 
-`check_out_reservation` computes `final_total_cents` (overstay included) and returns it, but
-nothing consumes that figure. Measured on parkos-dev: 8 of 8 historical walk-ins collected $0.
+`check_out_reservation` computed `final_total_cents` (overstay included) and returned it, but
+nothing consumed that figure. Measured on parkos-dev: 8 of 8 historical walk-ins collected $0.
+It now prices the overstay itself and can collect the balance in the same transaction.
 
-Closing this means choosing a cash/card-at-booth flow and adding the payment method and schema
-columns to record it. Until then a gated, attended lot — Lot A of the reference operator above —
-cannot run on ParkOS in production.
+The booth surface is `/checkin/{booking_code}` — the URL already printed as a QR on every
+receipt, which until now had no route behind it.
+
+One functional gap remains: `facility_dashboard_summary` and the `report_*` revenue functions
+still sum only Stripe-backed `payments`. Until a follow-up reporting migration includes
+`booth_payments` without double-counting mixed-payment reservations, cash and card-terminal money
+is recorded and auditable but absent from dashboard and report revenue totals.
 
 ## Known gap: permit subscription payments are not recorded
 
@@ -155,10 +187,10 @@ There is no permit invoice or payment table anywhere. Permits carry a `stripe_su
 a `monthly_rate_cents`, and period bounds — an expectation of billing, never a record of it.
 On parkos-dev, 4 active permit subscriptions bill monthly with zero corresponding record.
 
-This is separate from the in-person collection gap above, and arguably more urgent. Walk-in
-payment is a path that was never built. Permit billing is a path that works, is actively selling,
-and generates real revenue that goes untracked — so the operator cannot reconcile, report on, or
-audit it. Any revenue report is understated by exactly the amount permits bring in.
+This is separate from the in-person reporting gap above, and arguably more urgent. Walk-in money
+now has a recording path; permit billing works, is actively selling, and generates real revenue
+that goes wholly untracked — so the operator cannot reconcile, report on, or audit it. Any revenue
+report is understated by exactly the amount permits bring in.
 
 Closing it needs two things: handling `invoice.payment_succeeded` in the webhook, and somewhere to
 put the result — either a dedicated permit payments table or a relaxed `payments` schema that
