@@ -38,6 +38,19 @@ first — this file tracks work, not architecture.
   migrations must `revoke execute ... from anon` explicitly, and nothing currently enforces that.
   A guard in `scripts/` (in the spirit of the SQL special-form check) or a periodic ACL audit query
   would catch a regression; neither exists yet.
+- **The same default privileges grant `anon` full DML on every new table in `public`, and RLS is
+  the only thing stopping it. UNMITIGATED.** The `ALTER DEFAULT PRIVILEGES` behind the function
+  issue above is not limited to functions. Confirmed on parkos-dev, for both the `postgres` and
+  `supabase_admin` grantors: new **tables** in `public` default to
+  `anon=arwdDxtm` — SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER — and new
+  sequences to `anon=rwU`. Every ParkOS table happens to have RLS enabled (Decision #1), which is
+  what makes this survivable today. But that means **a single table created without
+  `enable row level security` is an immediate, unauthenticated read *and write* hole**, not a slow
+  leak — the grant is already there waiting, and nothing announces it. This is a strictly larger
+  exposure than the function grants, and unlike those it has not been fixed or worked around.
+  `supabase/dev-only/verify_no_anon_execute.sql` could be extended to cover it: the check is a join
+  over `pg_class` for tables in `public` where `relrowsecurity` is false or `anon` holds any
+  privilege. Not built. Recording only — do not assume this is handled.
 - **Two timezone conventions coexist in SQL, and the Daily Manifest can disagree with the
   dashboard.** The `occupancy_dashboard` family (`facility_today_arrivals`,
   `facility_today_departures`, `facility_dashboard_summary`) bins by `f.timezone` directly, which
