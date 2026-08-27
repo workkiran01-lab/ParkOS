@@ -1,0 +1,37 @@
+-- ParkOS: actually remove anon EXECUTE from facility_daily_manifest.
+--
+-- 20260826010000 ended with the family's usual pair:
+--
+--   revoke all on function ... from public;
+--   grant execute on function ... to authenticated;
+--
+-- and a header comment claiming "No anon access". Verification against
+-- parkos-dev showed that claim is false. The function's ACL came back as:
+--
+--   postgres=X/postgres | anon=X/postgres | authenticated=X/postgres
+--                                         | service_role=X/postgres
+--
+-- WHY THE REVOKE MISSED. Supabase ships ALTER DEFAULT PRIVILEGES on the public
+-- schema granting EXECUTE on new functions to anon, authenticated, and
+-- service_role. Those are DIRECT grants to named roles. `REVOKE ... FROM
+-- PUBLIC` only drops the PUBLIC pseudo-role's privileges and leaves a direct
+-- grant to anon untouched, so the revoke was a no-op against the thing it was
+-- meant to stop.
+--
+-- IMPACT WAS ZERO, WHICH IS WHY IT WENT UNNOTICED. facility_daily_manifest is
+-- SECURITY INVOKER, so an anon caller gets RLS applied as anon: no membership
+-- means get_user_role(org_id) is null, the facilities row is invisible, the
+-- driving CTE is empty, and the call returns zero rows. This closes a stated-
+-- intent gap and removes a privilege nothing needs -- it is not a leak fix.
+--
+-- SCOPE. This migration touches ONLY facility_daily_manifest. The same ACL is
+-- on every other function checked (facility_today_arrivals,
+-- facility_today_departures, facility_overstays, facility_dashboard_summary,
+-- reservation_balance_cents, record_booth_payment), each of which carries the
+-- same inaccurate "no anon" comment. record_booth_payment is the one worth
+-- looking at first: it is SECURITY DEFINER, and while its internal role check
+-- rejects an anon caller, defense in depth argues for not granting the
+-- privilege at all. Recorded in docs/roadmap.md; deliberately left for its own
+-- migration rather than widened into this change.
+
+revoke execute on function public.facility_daily_manifest(uuid, date) from anon;
