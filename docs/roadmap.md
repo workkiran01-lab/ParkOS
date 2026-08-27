@@ -15,10 +15,18 @@ first — this file tracks work, not architecture.
   payment directly, but the booth screen has no link or QR that lets the customer start Stripe
   Checkout on their own phone. This is separate from the receipt QR, which opens the staff-only
   `/checkin/{booking_code}` surface.
-- **Duplicate "Sol city" facility on parkos-dev** (id `9ee7635b-…`). Zero price rules, and an
-  invalid IANA timezone string (`Pacific` rather than a real zone such as `America/Los_Angeles`),
-  so it is unbookable. Looks like an abandoned setup attempt. Needs cleanup — delete or fix, not
-  yet decided.
+- **Duplicate "Sol city" facility on parkos-dev** (id `9ee7635b-…`). Zero price rules, so still
+  unbookable. Its invalid timezone (`Pacific`) was corrected to `America/Los_Angeles` on
+  2026-08-26 — a data fix applied directly to parkos-dev, not a migration, since it is one
+  environment's row and would be a no-op or a wrong fix anywhere else. The 2 zones and 80 spaces
+  were kept rather than deleting the facility.
+  That timezone was a **latent `22023`, not a cosmetic wart**, which is why it was worth fixing
+  immediately rather than deferring: `facility_today_arrivals` returned cleanly for this facility
+  only because it has zero reservations, so `at time zone f.timezone` was never evaluated on any
+  row. The first booking there would have thrown `time zone "Pacific" not recognized` and taken
+  out the dashboard card. Verified after the fix: 0 of 5 facilities rejected by `safe_timezone`,
+  0 facilities where the manifest and dashboard conventions resolve different local days.
+  Still needs a decision on whether this duplicate should exist at all.
 - **`revoke ... from public` on functions does not remove anon EXECUTE, and every RPC comment
   claiming "No anon access" is wrong.** Supabase ships `ALTER DEFAULT PRIVILEGES` on the public
   schema granting EXECUTE on new functions directly to `anon`, `authenticated`, and `service_role`.
@@ -51,6 +59,25 @@ first — this file tracks work, not architecture.
   `supabase/dev-only/verify_no_anon_execute.sql` could be extended to cover it: the check is a join
   over `pg_class` for tables in `public` where `relrowsecurity` is false or `anon` holds any
   privilege. Not built. Recording only — do not assume this is handled.
+- **`facilities.timezone` has no validation, and the obvious constraint is worse than none.**
+  Nothing stops an arbitrary string being stored; `'Pacific'` reached parkos-dev that way. The
+  tempting fix is `check (public.safe_timezone(timezone) = timezone)`. **Do not add it.** Measured
+  against a live database: it correctly blocks `'Pacific'` and the empty string, but it **allows
+  `'PST'` and `'EST'`** — fixed-offset abbreviations that Postgres parses happily and that do not
+  observe DST. `timestamptz '2026-07-01 12:00+00' at time zone 'PST'` yields `04:00` where
+  `America/Los_Angeles` yields `05:00`: a one-hour divergence for roughly eight months a year,
+  which silently shifts every facility-local day boundary, and therefore every manifest, report,
+  and daily-cap split. A constraint that blocks the loud failure while admitting the quiet one
+  reads as protection and is not.
+  `check (timezone in (select name from pg_timezone_names))` is not an option either — Postgres
+  rejects it outright with `0A000 cannot use subquery in check constraint`.
+  Real validation needs one of: a `BEFORE INSERT/UPDATE` trigger checking membership in
+  `pg_timezone_names`, or a lookup table seeded from `pg_timezone_names` with a foreign key.
+  Either is deliberate work, not a one-liner.
+  Also note `public.safe_timezone(text)` is declared `IMMUTABLE` only **approximately**: tzdata
+  updates can change which zone names are valid, and existing rows are never re-checked against a
+  constraint once stored. That is tolerable for a fallback helper; it is a further reason not to
+  build a data constraint on top of it.
 - **Two timezone conventions coexist in SQL, and the Daily Manifest can disagree with the
   dashboard.** The `occupancy_dashboard` family (`facility_today_arrivals`,
   `facility_today_departures`, `facility_dashboard_summary`) bins by `f.timezone` directly, which
