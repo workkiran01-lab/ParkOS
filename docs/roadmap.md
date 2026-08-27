@@ -24,6 +24,31 @@ first — this file tracks work, not architecture.
   invalid IANA timezone string (`Pacific` rather than a real zone such as `America/Los_Angeles`),
   so it is unbookable. Looks like an abandoned setup attempt. Needs cleanup — delete or fix, not
   yet decided.
+- **`revoke ... from public` on functions does not remove anon EXECUTE, and every RPC comment
+  claiming "No anon access" is wrong.** Supabase ships `ALTER DEFAULT PRIVILEGES` on the public
+  schema granting EXECUTE on new functions directly to `anon`, `authenticated`, and `service_role`.
+  `REVOKE ... FROM PUBLIC` only drops the PUBLIC pseudo-role and leaves the direct `anon` grant in
+  place. Confirmed on parkos-dev: `facility_today_arrivals`, `facility_today_departures`,
+  `facility_overstays`, `facility_dashboard_summary`, `reservation_balance_cents`, and
+  `record_booth_payment` all carry `anon=X/postgres`. Nothing leaks today — the SECURITY INVOKER
+  ones return zero rows to a role with no membership, and `record_booth_payment` rejects an anon
+  caller in its own role check — so this is a defense-in-depth and truth-in-comments gap, not an
+  active hole. `record_booth_payment` is the one to fix first: it is SECURITY DEFINER and takes
+  money. `facility_daily_manifest` is already fixed (`20260826020000`); the rest need
+  `revoke execute ... from anon` in their own migration, plus corrected comments.
+- **Two timezone conventions coexist in SQL, and the Daily Manifest can disagree with the
+  dashboard.** The `occupancy_dashboard` family (`facility_today_arrivals`,
+  `facility_today_departures`, `facility_dashboard_summary`) bins by `f.timezone` directly, which
+  raises `22023` on an unusable value. The `reporting_functions` family and the newer
+  `facility_daily_manifest` bin by `public.safe_timezone(f.timezone)`, which falls back to UTC so
+  one bad facility cannot take down a whole query. Consequence: for a facility whose timezone
+  string is malformed, the manifest bins by UTC while the dashboard's arrivals card does something
+  else, and the two surfaces show different days. This is live, not theoretical — the duplicate
+  "Sol city" above has `Pacific`, and on 2026-08-26 its manifest "today" was 2026-08-27 while every
+  correctly-configured facility's was 2026-08-26. **Deliberate, not fixed.** The manifest chose
+  `safe_timezone` as the safer of the two rather than propagate the raising version; converging the
+  dashboard family onto `safe_timezone` is the real fix and is its own migration. Do not treat the
+  divergence as a manifest bug.
 - **No back/breadcrumb navigation anywhere in the staff app** (`/app/*`). Noticed during testing.
   A real UX gap, not yet scoped.
 - **Multi-role login edge cases.** One auth user holding both a staff membership and a customer

@@ -9,6 +9,7 @@ import {
 import {
   BarChart3,
   CalendarDays,
+  ClipboardList,
   Gauge,
   LayoutDashboard,
   ParkingSquare,
@@ -74,7 +75,9 @@ function AppLayout() {
         .maybeSingle(),
       supabase
         .from('facilities')
-        .select('id, name')
+        // timezone: the daily manifest bins by the facility's local day, not
+        // the browser's.
+        .select('id, name, timezone')
         .eq('org_id', orgId)
         .is('archived_at', null)
         .order('name'),
@@ -126,13 +129,25 @@ function AppLayout() {
               />
             </NavGroup>
             {operations && (
-              <NavGroup label="Operations" collapsed={collapsed}>
+              <NavGroup label="Booking" collapsed={collapsed}>
+                <NavItem
+                  to="/app/booking/manifest"
+                  label="Daily Manifest"
+                  icon={ClipboardList}
+                  collapsed={collapsed}
+                />
+                {/* Booth keeps its own full-screen layout outside AppShell;
+                    only its position in the sidebar moved. */}
                 <NavItem
                   to="/attendant"
                   label="Booth"
                   icon={SquareParking}
                   collapsed={collapsed}
                 />
+              </NavGroup>
+            )}
+            {operations && (
+              <NavGroup label="Operations" collapsed={collapsed}>
                 <NavItem
                   to="/app/occupancy"
                   label="Occupancy"
@@ -238,6 +253,7 @@ function NavGroup({
 
 type AppPath =
   | '/app'
+  | '/app/booking/manifest'
   | '/app/onboarding'
   | '/app/staff'
   | '/app/facilities'
