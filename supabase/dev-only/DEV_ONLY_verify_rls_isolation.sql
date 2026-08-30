@@ -10,7 +10,7 @@
 begin;
 
 -- ---------------------------------------------------------------------------
--- CHECK 0: the DDL actually landed — 20 RLS-enabled tables, 59 policies,
+-- CHECK 0: the DDL actually landed — 21 RLS-enabled tables, 61 policies,
 -- all authorization/bootstrap/lifecycle functions present and SECURITY DEFINER.
 -- ---------------------------------------------------------------------------
 do $$
@@ -22,9 +22,10 @@ begin
                        'zones','spaces','customers','vehicles','reservations',
                        'permits','price_rules','space_holds','invites','audit_log',
                        'payments','processed_stripe_events','vehicle_photos',
-                       'booth_payments','receipts','account_status');
-  if v <> 20 then
-    raise exception 'CHECK0 FAIL: expected 20 RLS-enabled tables, found %', v;
+                       'booth_payments','receipts','account_status',
+                       'permit_payments');
+  if v <> 21 then
+    raise exception 'CHECK0 FAIL: expected 21 RLS-enabled tables, found %', v;
   end if;
 
   -- 36 through Week 4, +1 in Week 5 (space_holds_update for release-early),
@@ -35,10 +36,11 @@ begin
   -- +2 in Week 10 (vehicle_photos SELECT for members, INSERT for staff),
   -- +2 in Week 12 (permit own SELECT and staff UPDATE),
   -- +3 for account deactivation (account_status), which this count had drifted
-  -- behind, and +2 for booth_payments (SELECT for members, SELECT for owners).
+  -- behind, +2 for booth_payments (SELECT for members, SELECT for owners), and
+  -- +2 for permit_payments (SELECT for members, SELECT for owners).
   select count(*) into v from pg_policies where schemaname = 'public';
-  if v <> 59 then
-    raise exception 'CHECK0 FAIL: expected 59 policies, found %', v;
+  if v <> 61 then
+    raise exception 'CHECK0 FAIL: expected 61 policies, found %', v;
   end if;
 
   select count(*) into v
@@ -69,7 +71,7 @@ begin
   if v <> 1 then
     raise exception 'CHECK0 FAIL: is_own_customer missing or wrongly SECURITY DEFINER';
   end if;
-  raise notice 'CHECK0 PASS: 20 RLS tables, 59 policies, 23 SECURITY DEFINER functions';
+  raise notice 'CHECK0 PASS: 21 RLS tables, 61 policies, 23 SECURITY DEFINER functions';
 end $$;
 
 -- ---------------------------------------------------------------------------
@@ -1068,7 +1070,7 @@ begin
     end;
 
     begin
-      perform public.check_out_reservation(v_res_b, 0);
+      perform public.check_out_reservation(v_res_b, now());
       raise exception 'CHECK10 FAIL: Org A attendant checked out an Org B reservation';
     exception
       when sqlstate 'P0001' then
@@ -1264,7 +1266,7 @@ rollback;
 -- completes, return an explicit, machine-visible summary for CI/manual evidence.
 select check_name, result
 from (values
-  ('CHECK0',  'PASS: 20 RLS tables, 59 policies, 23 SECURITY DEFINER functions'),
+  ('CHECK0',  'PASS: 21 RLS tables, 61 policies, 23 SECURITY DEFINER functions'),
   ('CHECK0b', 'PASS: authenticated has normal DML grants; permits is SELECT-only'),
   ('CHECK0c', 'PASS: payment writes and Stripe event processing are service-role-only'),
   ('CHECK1',  'PASS: Org A sees exactly 2 facilities / 165 spaces, all Org A'),

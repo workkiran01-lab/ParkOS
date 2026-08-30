@@ -116,13 +116,14 @@ first — this file tracks work, not architecture.
   but the two SQL conventions still diverge if another malformed value is stored. The manifest
   chose `safe_timezone` as the safer behavior; converging the dashboard family onto
   `safe_timezone` remains the durable fix and requires its own migration.
-- **RLS isolation CHECK10 calls a removed checkout signature.**
-  `supabase/dev-only/DEV_ONLY_verify_rls_isolation.sql` still invokes
-  `check_out_reservation(uuid, integer)`, but `20260825010000_booth_payments.sql` replaced that
-  overload with `check_out_reservation(uuid, timestamptz, text, text)`. The rollback-wrapped
-  verifier now reaches CHECK10 and fails with `42883` before it can prove cross-org checkout
-  isolation. Both application callers already use the current named parameters, so this is
-  verifier drift rather than a broken production call. Update CHECK10 and rerun the full verifier.
+- **RLS isolation CHECK12 aborts on a missing price rule.**
+  CHECK0's table/policy counts and CHECK10's removed `check_out_reservation(uuid, integer)` call
+  are fixed, and CHECK 0 through CHECK 10 now pass. CHECK12 selects its test space with
+  `order by s.id limit 1` across every Org A space, but Lot B has no `price_rules` row, so
+  `create_reservation` raises `P0002 PRICE_RULE_NOT_FOUND`. CHECK12 catches only `P0001`, so the
+  error propagates and aborts the run before cross-org permit isolation is proven. Verifier drift
+  rather than a broken production call: give CHECK12 its own price-rule fixture, as CHECK7 and
+  CHECK8 already do.
 - **No back/breadcrumb navigation anywhere in the staff app** (`/app/*`). Noticed during testing.
   A real UX gap, not yet scoped.
 - **Multi-role login edge cases.** One auth user holding both a staff membership and a customer
