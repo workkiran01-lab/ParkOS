@@ -1176,6 +1176,15 @@ begin
      order by s.id limit 1;
     if v_space is null then raise exception 'CHECK12 FAIL: no long-term test space'; end if;
 
+    -- Low-priority facility-wide rule so quoting always finds something, the same
+    -- fixture CHECK7 and CHECK8 create. The space chosen above can belong to any
+    -- Org A facility, and Lot B has no price_rules row, so without this the
+    -- create_reservation assertion below aborts on P0002 PRICE_RULE_NOT_FOUND
+    -- before it can reach SPACE_UNAVAILABLE. Teardown is this block's existing
+    -- sentinel rollback, so no explicit delete is needed.
+    insert into public.price_rules (org_id, facility_id, hourly_rate_cents, priority)
+    values (org_a, v_facility, 100, -1000);
+
     -- A customer can read their eventual permit, but can never issue one.
     perform set_config('request.jwt.claims',
       format('{"sub":"%s","role":"authenticated"}', c_user1), true);

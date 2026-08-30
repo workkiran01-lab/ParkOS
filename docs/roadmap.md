@@ -116,14 +116,6 @@ first — this file tracks work, not architecture.
   but the two SQL conventions still diverge if another malformed value is stored. The manifest
   chose `safe_timezone` as the safer behavior; converging the dashboard family onto
   `safe_timezone` remains the durable fix and requires its own migration.
-- **RLS isolation CHECK12 aborts on a missing price rule.**
-  CHECK0's table/policy counts and CHECK10's removed `check_out_reservation(uuid, integer)` call
-  are fixed, and CHECK 0 through CHECK 10 now pass. CHECK12 selects its test space with
-  `order by s.id limit 1` across every Org A space, but Lot B has no `price_rules` row, so
-  `create_reservation` raises `P0002 PRICE_RULE_NOT_FOUND`. CHECK12 catches only `P0001`, so the
-  error propagates and aborts the run before cross-org permit isolation is proven. Verifier drift
-  rather than a broken production call: give CHECK12 its own price-rule fixture, as CHECK7 and
-  CHECK8 already do.
 - **No back/breadcrumb navigation anywhere in the staff app** (`/app/*`). Noticed during testing.
   A real UX gap, not yet scoped.
 - **Multi-role login edge cases.** One auth user holding both a staff membership and a customer
