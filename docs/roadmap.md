@@ -12,6 +12,17 @@ first — this file tracks work, not architecture.
   only reservation `payments` and `booth_payments`, so their displayed totals remain understated
   by permit revenue. Extend those functions (and their online/booth breakdown contract) before
   treating the operator reports as total revenue.
+- **No reconciliation for a permit cancellation Stripe confirmed but no webhook completed.**
+  Cancelling a Stripe-billed permit now calls Stripe first and lets
+  `customer.subscription.deleted` write the cancellation, so a failed Stripe call leaves the
+  permit active and still held rather than cancelled-and-released. The remaining hole is the
+  other end: if Stripe cancels but the webhook is never delivered inside Stripe's retry window,
+  `permits.cancellation_requested_at` stays set while `status` stays `active`, the space stays
+  held, and billing has already stopped. The permit reads "Cancelling" forever and nothing
+  retries. `create-permit-subscription` deliberately does not repair this itself, because
+  Decision #7 keeps the webhook the sole writer of cancellation state. Needs a periodic sweep
+  that re-reads Stripe for permits with an outstanding request and drives them to a final state,
+  or an explicit staff "reconcile now" action. Deliberately not built with the ordering fix.
 - **Customer self-pay handoff at the booth doesn't exist.** Staff can collect cash or card-terminal
   payment directly, but the booth screen has no link or QR that lets the customer start Stripe
   Checkout on their own phone. This is separate from the receipt QR, which opens the staff-only

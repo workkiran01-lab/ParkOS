@@ -61,13 +61,33 @@ Deno.serve(async (request) => {
     if (action === 'cancel') {
       if (!permit.stripe_subscription_id)
         return errorResponse('This permit has no Stripe subscription to cancel.', 409)
-      await getStripeClient().subscriptions.cancel(permit.stripe_subscription_id, {
-        cancellation_details: {
-          comment: readString(body?.reason) ?? 'Cancelled by ParkOS staff',
-        },
-      })
+
+      // Stripe's cancel is NOT idempotent. A canceled subscription is immutable
+      // apart from metadata and cancellation_details, so a second cancel fails
+      // with "A subscription with status canceled cannot be updated". Staff DO
+      // retry here, because this call now runs before ParkOS records anything,
+      // so probe the status first and treat an existing cancellation as success.
+      // Reporting that as an error would tell an operator billing is still
+      // running when it has already stopped.
+      const stripe = getStripeClient()
+      const existing = await stripe.subscriptions.retrieve(permit.stripe_subscription_id)
+      const alreadyCancelled = existing.status === 'canceled'
+      if (!alreadyCancelled) {
+        await stripe.subscriptions.cancel(permit.stripe_subscription_id, {
+          cancellation_details: {
+            comment: readString(body?.reason) ?? 'Cancelled by ParkOS staff',
+          },
+        })
+      }
+
+      // Deliberately no ParkOS write here. customer.subscription.deleted is the
+      // sole writer of cancellation state (ARCHITECTURE.md Decision #7), and
+      // Stripe redelivers that event on failure. If the subscription was already
+      // canceled and no webhook ever landed, the permit stays in the requested
+      // state until reconciliation — see the roadmap entry.
       return jsonResponse({
         requested: true,
+        already_cancelled: alreadyCancelled,
         message: 'Cancellation requested. Waiting for Stripe confirmation.',
       }, 202)
     }

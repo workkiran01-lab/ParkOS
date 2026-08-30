@@ -40,6 +40,7 @@ import { useFacility } from '@/hooks/useFacility'
 import { useRole } from '@/hooks/useRole'
 import { edgeFunctionError, friendlyError } from '@/lib/errors'
 import { dollars } from '@/lib/format'
+import { isCancelling, permitCancelOutcome } from '@/lib/permit-cancel'
 import { supabase } from '@/lib/supabase'
 import { Field } from '@/routes/login'
 
@@ -59,6 +60,7 @@ type PermitRow = {
   stripe_subscription_id: string | null
   current_period_start: string | null
   current_period_end: string | null
+  cancellation_requested_at: string | null
 }
 
 const ANY = 'all'
@@ -113,7 +115,7 @@ function Permits() {
     const permitResult = await supabase
       .from('permits')
       .select(
-        'id, facility_id, space_id, customer_id, monthly_rate_cents, currency, status, stripe_subscription_id, current_period_start, current_period_end, created_at',
+        'id, facility_id, space_id, customer_id, monthly_rate_cents, currency, status, stripe_subscription_id, current_period_start, current_period_end, cancellation_requested_at, created_at',
       )
       .eq('org_id', orgId)
       .is('archived_at', null)
@@ -173,6 +175,7 @@ function Permits() {
         stripe_subscription_id: p.stripe_subscription_id,
         current_period_start: p.current_period_start,
         current_period_end: p.current_period_end,
+        cancellation_requested_at: p.cancellation_requested_at,
       })),
     )
     setLoading(false)
@@ -282,7 +285,10 @@ function Permits() {
                         {dollars(row.monthly_rate_cents)} {row.currency}
                       </TableCell>
                       <TableCell>
-                        <PermitStatusBadge status={row.status} />
+                        <PermitStatusBadge
+                          status={row.status}
+                          cancellationRequestedAt={row.cancellation_requested_at}
+                        />
                       </TableCell>
                       <TableCell className="text-muted-foreground">
                         {billingPeriod(row.current_period_start, row.current_period_end)}
@@ -677,35 +683,60 @@ function CancelPermitDialog({
   async function confirmCancel() {
     if (!permit) return
     setBusy(true)
-    // cancel_permit is the source of truth: it marks the permit cancelled and
-    // releases the space hold immediately (so the occupancy grid frees the
-    // space at once). If a Stripe subscription exists, also request its
-    // cancellation so billing actually stops — cancel_permit is idempotent, so
-    // the resulting webhook re-cancel is a no-op.
-    const { error: cancelError } = await supabase.rpc('cancel_permit', {
-      p_permit_id: permit.id,
-      p_reason: reason.trim() || null,
-    })
-    if (cancelError) {
+
+    // No Stripe subscription means no billing to stop, so cancel_permit is the
+    // whole operation and its result is final. This is the ONLY path where the
+    // browser writes cancellation state.
+    if (!permit.stripe_subscription_id) {
+      const { error: directError } = await supabase.rpc('cancel_permit', {
+        p_permit_id: permit.id,
+        p_reason: reason.trim() || null,
+      })
       setBusy(false)
-      toast.error(friendlyError(cancelError, 'The permit could not be cancelled.'))
+      const direct = permitCancelOutcome({
+        hasSubscription: false,
+        directFailed: !!directError,
+      })
+      if (direct.kind === 'error') {
+        toast.error(friendlyError(directError, direct.message))
+        return
+      }
+      toast.success(direct.message)
+      onCancelled()
       return
     }
 
-    if (permit.stripe_subscription_id) {
-      const { error: subError } = await supabase.functions.invoke(
-        'create-permit-subscription',
-        { body: { permit_id: permit.id, action: 'cancel', reason: reason.trim() } },
-      )
-      if (subError) {
-        toast.warning(
-          'Permit cancelled, but stopping Stripe billing failed — verify in Stripe.',
-        )
-      }
+    // Record the intent before contacting Stripe, so the row reads "Cancelling"
+    // even if the operator closes the browser while Stripe is answering. This
+    // writes ONLY a timestamp: no status change and no hold release.
+    const { error: intentError } = await supabase.rpc('request_permit_cancellation', {
+      p_permit_id: permit.id,
+      p_reason: reason.trim() || null,
+    })
+    if (intentError) {
+      setBusy(false)
+      const failed = permitCancelOutcome({ hasSubscription: true, intentFailed: true })
+      toast.error(friendlyError(intentError, failed.message))
+      return
     }
 
+    // Stripe FIRST. Nothing in ParkOS is cancelled until
+    // customer.subscription.deleted arrives, so a failure here leaves the permit
+    // active and still billing — which is exactly what the operator is told.
+    const { error: subError } = await supabase.functions.invoke(
+      'create-permit-subscription',
+      { body: { permit_id: permit.id, action: 'cancel', reason: reason.trim() } },
+    )
     setBusy(false)
-    toast.success('Permit cancelled')
+
+    const outcome = permitCancelOutcome({
+      hasSubscription: true,
+      stripeFailed: !!subError,
+    })
+    if (outcome.kind === 'error') toast.error(outcome.message)
+    else toast.success(outcome.message)
+    // Refresh either way: the row now shows "Cancelling", and Cancel stays
+    // available so a failed Stripe call can be retried.
     onCancelled()
   }
 
@@ -740,7 +771,18 @@ function CancelPermitDialog({
   )
 }
 
-function PermitStatusBadge({ status }: { status: string }) {
+function PermitStatusBadge({
+  status,
+  cancellationRequestedAt,
+}: {
+  status: string
+  cancellationRequestedAt: string | null
+}) {
+  // An outstanding request outranks the stored status: the permit is still
+  // active and still billing until Stripe confirms, but staff need to see that
+  // a cancellation is already in flight rather than clicking Cancel again.
+  if (isCancelling(status, cancellationRequestedAt))
+    return <Badge variant="secondary">Cancelling</Badge>
   const variant =
     status === 'active'
       ? 'default'
