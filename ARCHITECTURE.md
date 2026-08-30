@@ -176,24 +176,26 @@ receipt, which until now had no route behind it.
 breakdowns. Cash and card-terminal collections are therefore included in dashboard and report
 revenue totals.
 
-## Known gap: permit subscription payments are not recorded
+## Permit subscription payment ledger
 
-Monthly permits bill successfully through Stripe, and ParkOS keeps no record of the money.
+Monthly permit invoices use their own `permit_payments` ledger. They do not weaken the invariants
+on reservation Checkout rows in `payments`: a recurring invoice has no reservation and no Checkout
+Session, while both identifiers remain required there.
 
-- `payments.reservation_id` is `NOT NULL`, so a permit charge cannot be inserted into that table
-  at all.
-- The stripe-webhook's `handledEventTypes` set includes `invoice.payment_failed` but not
-  `invoice.payment_succeeded`. A failed permit charge is noticed; a successful one is dropped.
+The signature-verified Stripe webhook handles `invoice.payment_succeeded` and calls the
+service-role-only `record_permit_payment` function. That function resolves the permit from the
+invoice's permit metadata or Stripe subscription id, records the amount Stripe actually collected,
+and writes an audit entry in one transaction. Browser roles cannot write the table or execute the
+recorder.
 
-There is no permit invoice or payment table anywhere. Permits carry a `stripe_subscription_id`,
-a `monthly_rate_cents`, and period bounds — an expectation of billing, never a record of it.
-Permit subscriptions can bill monthly with no corresponding payment record in ParkOS.
+Idempotency exists at two levels: `processed_stripe_events.event_id` collapses ordinary webhook
+retries, and unique `permit_payments.stripe_invoice_id` prevents a resent invoice under a different
+event id from becoming duplicate revenue. A later billing period has a different invoice id and is
+therefore a separate ledger row. Payments that arrive after a permit was cancelled are still
+recorded because the ledger describes money Stripe collected, not whether collection should have
+happened.
 
-This is separate from the in-person reporting gap above, and arguably more urgent. Walk-in money
-now has a recording path; permit billing works, is actively selling, and generates real revenue
-that goes wholly untracked — so the operator cannot reconcile, report on, or audit it. Any revenue
-report is understated by exactly the amount permits bring in.
-
-Closing it needs two things: handling `invoice.payment_succeeded` in the webhook, and somewhere to
-put the result — either a dedicated permit payments table or a relaxed `payments` schema that
-admits a row belonging to a permit rather than a reservation.
+The v1 revenue-reporting functions do not yet aggregate `permit_payments`; they still report
+reservation Checkout and booth collections only. Recording and reporting are separate concerns:
+the ledger is now durable and reconcilable, while adding permit revenue to facility/date reports
+remains launch work tracked in `docs/roadmap.md`.

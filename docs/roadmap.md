@@ -6,11 +6,12 @@ first — this file tracks work, not architecture.
 
 ## Known gaps (should resolve before real launch)
 
-- **Permit subscription payments are not recorded.** Successful monthly charges are never written
-  anywhere — `invoice.payment_succeeded` is unhandled and `payments.reservation_id` is `NOT NULL`,
-  so there is nowhere to put the row. 4 live subscriptions currently bill with zero record, and
-  every revenue report is understated by that amount. See the known-gap section in
-  `ARCHITECTURE.md`. Arguably the most urgent item here: this is working, selling, untracked revenue.
+- **Permit payments are recorded but still absent from revenue reporting.**
+  `20260829000000_permit_payments.sql` and the Stripe webhook now persist each successful monthly
+  invoice in an idempotent, audited ledger. The dashboard and `report_*` functions still combine
+  only reservation `payments` and `booth_payments`, so their displayed totals remain understated
+  by permit revenue. Extend those functions (and their online/booth breakdown contract) before
+  treating the operator reports as total revenue.
 - **Customer self-pay handoff at the booth doesn't exist.** Staff can collect cash or card-terminal
   payment directly, but the booth screen has no link or QR that lets the customer start Stripe
   Checkout on their own phone. This is separate from the receipt QR, which opens the staff-only
@@ -54,12 +55,35 @@ first — this file tracks work, not architecture.
   `anon=arwdDxtm` — SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER — and new
   sequences to `anon=rwU`. Every ParkOS table happens to have RLS enabled (Decision #1), which is
   what makes this survivable today. But that means **a single table created without
-  `enable row level security` is an immediate, unauthenticated read *and write* hole**, not a slow
+  `enable row level security` is an immediate, unauthenticated read _and write_ hole**, not a slow
   leak — the grant is already there waiting, and nothing announces it. This is a strictly larger
   exposure than the function grants, and unlike those it has not been fixed or worked around.
   `supabase/dev-only/verify_no_anon_execute.sql` could be extended to cover it: the check is a join
   over `pg_class` for tables in `public` where `relrowsecurity` is false or `anon` holds any
   privilege. Not built. Recording only — do not assume this is handled.
+- **`reservations` has zero RLS UPDATE policies, so no field is correctable after creation.**
+  The table has only `reservations_select`, `reservations_select_own`, `reservations_insert`, and
+  `reservations_insert_own` — no UPDATE policy at all, while RLS is enabled. Every mutation goes
+  through a `SECURITY DEFINER` RPC (`confirm_reservation`, `cancel_reservation`,
+  `check_in_reservation`, `extend_reservation`, …), each of which writes a fixed set of columns.
+  **The failure mode is silent.** Table-level `UPDATE` _is_ granted to `authenticated`, so a client
+  UPDATE is not rejected — it matches zero rows and returns success. Measured on parkos-dev: the
+  same `update reservations set vehicle_id = …` affects 1 row as `postgres` and **0 rows as a real
+  staff admin**, with no error, on a row that same admin can `SELECT`. Nothing in the UI does this
+  today, so nothing is broken; the hazard is that the next person who tries will get a green path
+  that does nothing.
+  Direct consequence: **`vehicle_id` must be supplied at creation or never** — which is why
+  `/app/booking/new` requires a vehicle even though the column is nullable. Any future "edit
+  reservation" feature (fix a plate, correct a customer, adjust a window outside `extend_reservation`)
+  needs an RPC or an UPDATE policy **first** — it cannot be built in the client alone.
+- **`create-checkout-session` is unusable from any staff context.** Its success and cancel URLs are
+  hardcoded to `${returnOrigin}/my/reservations?checkout=…`
+  (`supabase/functions/create-checkout-session/index.ts`), which is the customer area. The function
+  itself works for staff — it authorizes with the caller's JWT and staff can select any org
+  reservation under RLS — so a staff member _can_ start a Checkout session, but completing it
+  dumps them on a customer page that is empty for a user with no customer record. This is why the
+  New Booking flow deliberately stops at `pending` rather than offering Checkout. Fixing it means
+  making the return path caller-aware; not attempted.
 - **`facilities.timezone` has no validation, and the obvious constraint is worse than none.**
   Nothing stops an arbitrary string being stored; `'Pacific'` reached parkos-dev that way. The
   tempting fix is `check (public.safe_timezone(timezone) = timezone)`. **Do not add it.** Measured
