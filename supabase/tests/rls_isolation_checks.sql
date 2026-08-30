@@ -79,7 +79,7 @@ begin
 end $$;
 
 -- Run the full executable companion for synthetic customer/cross-org fixtures:
--- supabase/dev-only/20260819050000_verify_rls_isolation.sql
+-- supabase/dev-only/DEV_ONLY_verify_rls_isolation.sql
 -- Its CHECK12 proves own/cross-customer visibility, cross-org isolation,
 -- customer issue denial, reservation overlap rejection, and hold release.
 

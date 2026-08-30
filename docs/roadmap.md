@@ -117,7 +117,7 @@ first — this file tracks work, not architecture.
   chose `safe_timezone` as the safer behavior; converging the dashboard family onto
   `safe_timezone` remains the durable fix and requires its own migration.
 - **RLS isolation CHECK10 calls a removed checkout signature.**
-  `supabase/dev-only/20260819050000_verify_rls_isolation.sql` still invokes
+  `supabase/dev-only/DEV_ONLY_verify_rls_isolation.sql` still invokes
   `check_out_reservation(uuid, integer)`, but `20260825010000_booth_payments.sql` replaced that
   overload with `check_out_reservation(uuid, timestamptz, text, text)`. The rollback-wrapped
   verifier now reaches CHECK10 and fails with `42883` before it can prove cross-org checkout
