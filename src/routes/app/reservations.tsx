@@ -30,6 +30,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
+import { useFacility } from '@/hooks/useFacility'
 import { useRole } from '@/hooks/useRole'
 import { friendlyError } from '@/lib/errors'
 import { dollars } from '@/lib/format'
@@ -65,8 +66,12 @@ export const Route = createFileRoute('/app/reservations')({
 
 function StaffReservations() {
   const { role, org_id: orgId, loading: roleLoading } = useRole()
+  const {
+    allFacilities: facilities,
+    loading: facilitiesLoading,
+    error: facilitiesError,
+  } = useFacility()
   const [rows, setRows] = useState<Row[]>([])
-  const [facilities, setFacilities] = useState<{ id: string; name: string }[]>([])
   const [statusFilter, setStatusFilter] = useState('pending')
   const [facilityFilter, setFacilityFilter] = useState(ANY)
   const [loading, setLoading] = useState(true)
@@ -75,30 +80,23 @@ function StaffReservations() {
   const allowed = role === 'admin' || role === 'manager' || role === 'attendant'
 
   const load = useCallback(async () => {
-    if (!orgId || !allowed) return
+    if (!orgId || !allowed || facilitiesLoading) return
     setLoading(true)
     setError(null)
 
-    const [resResult, facResult] = await Promise.all([
-      supabase
-        .from('reservations')
-        .select(
-          'id, booking_code, facility_id, space_id, customer_id, during, status, total_cents, currency',
-        )
-        .eq('org_id', orgId)
-        .order('created_at', { ascending: false })
-        .limit(500),
-      supabase
-        .from('facilities')
-        .select('id, name')
-        .eq('org_id', orgId)
-        .order('name'),
-    ])
+    const resResult = await supabase
+      .from('reservations')
+      .select(
+        'id, booking_code, facility_id, space_id, customer_id, during, status, total_cents, currency',
+      )
+      .eq('org_id', orgId)
+      .order('created_at', { ascending: false })
+      .limit(500)
 
-    if (resResult.error || facResult.error) {
+    if (resResult.error || facilitiesError) {
       setError(
         friendlyError(
-          resResult.error ?? facResult.error,
+          resResult.error ?? facilitiesError,
           'Reservations could not be loaded. Please try again.',
         ),
       )
@@ -107,9 +105,7 @@ function StaffReservations() {
     }
 
     const reservations = resResult.data ?? []
-    const facilityRows = facResult.data ?? []
-    setFacilities(facilityRows)
-    const facilityName = new Map(facilityRows.map((f) => [f.id, f.name]))
+    const facilityName = new Map(facilities.map((f) => [f.id, f.name]))
 
     const spaceIds = [...new Set(reservations.map((r) => r.space_id))]
     const customerIds = [...new Set(reservations.map((r) => r.customer_id))]
@@ -168,7 +164,7 @@ function StaffReservations() {
       })),
     )
     setLoading(false)
-  }, [orgId, allowed])
+  }, [orgId, allowed, facilities, facilitiesError, facilitiesLoading])
 
   useEffect(() => {
     if (!roleLoading) void Promise.resolve().then(load)

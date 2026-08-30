@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react'
+import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { createFileRoute } from '@tanstack/react-router'
 import type { QuoteBreakdown } from '@/components/facility/PricingSection'
 import { defaultLocalDatetime, dollars } from '@/lib/format'
@@ -28,12 +28,11 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
+import { useFacility } from '@/hooks/useFacility'
 import { useRole } from '@/hooks/useRole'
 import { spaceTypes, type SpaceRow, type ZoneRow } from '@/lib/holds'
 import { supabase } from '@/lib/supabase'
 import { Field } from '@/routes/login'
-
-type FacilityOption = { id: string; name: string }
 
 const ANY = 'any'
 
@@ -43,7 +42,7 @@ export const Route = createFileRoute('/app/availability')({
 
 function Availability() {
   const { role, loading: roleLoading } = useRole()
-  const [facilities, setFacilities] = useState<FacilityOption[]>([])
+  const { facilities, error: facilitiesError } = useFacility()
   const [zones, setZones] = useState<ZoneRow[]>([])
   const [facilityId, setFacilityId] = useState('')
   const [start, setStart] = useState(() => defaultLocalDatetime())
@@ -59,25 +58,13 @@ function Availability() {
   const allowed =
     role === 'admin' || role === 'manager' || role === 'attendant'
 
-  const loadFacilities = useCallback(async () => {
-    if (!allowed) return
-    const { data, error: loadError } = await supabase
-      .from('facilities')
-      .select('id, name')
-      .is('archived_at', null)
-      .order('name')
-    if (loadError) {
-      setError(loadError.message)
-      return
-    }
-    const options = (data ?? []) as FacilityOption[]
-    setFacilities(options)
-    setFacilityId((current) => current || (options[0]?.id ?? ''))
-  }, [allowed])
-
   useEffect(() => {
-    if (!roleLoading) void Promise.resolve().then(loadFacilities)
-  }, [loadFacilities, roleLoading])
+    if (roleLoading || !allowed) return
+    void Promise.resolve().then(() => {
+      if (facilitiesError) setError(facilitiesError.message)
+      setFacilityId((current) => current || (facilities[0]?.id ?? ''))
+    })
+  }, [allowed, facilities, facilitiesError, roleLoading])
 
   const zoneById = useMemo(
     () => new Map(zones.map((zone) => [zone.id, zone])),

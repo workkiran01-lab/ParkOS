@@ -18,6 +18,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { PageSpinner } from '@/components/ui/Spinner'
+import { useFacility } from '@/hooks/useFacility'
 import { useRole } from '@/hooks/useRole'
 import { csvFilename, downloadCsv, toCsv, type CsvColumn } from '@/lib/csv'
 import { friendlyError } from '@/lib/errors'
@@ -153,11 +154,9 @@ function ReportSection({
 
 function Reports() {
   const { role, org_id: orgId, loading: roleLoading } = useRole()
+  const { facilities } = useFacility()
   const allowed = role === 'admin' || role === 'manager'
 
-  const [facilities, setFacilities] = useState<{ id: string; name: string }[]>(
-    [],
-  )
   const [facilityId, setFacilityId] = useState<string>(ALL)
   const [from, setFrom] = useState(() => daysAgo(29))
   const [to, setTo] = useState(() => toDateInput(new Date()))
@@ -171,17 +170,6 @@ function Reports() {
 
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-
-  useEffect(() => {
-    if (!orgId || !allowed) return
-    void supabase
-      .from('facilities')
-      .select('id, name')
-      .eq('org_id', orgId)
-      .is('archived_at', null)
-      .order('name')
-      .then(({ data }) => setFacilities(data ?? []))
-  }, [orgId, allowed])
 
   const load = useCallback(async () => {
     if (!orgId || !allowed) return

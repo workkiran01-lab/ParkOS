@@ -36,6 +36,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
+import { useFacility } from '@/hooks/useFacility'
 import { useRole } from '@/hooks/useRole'
 import { edgeFunctionError, friendlyError } from '@/lib/errors'
 import { dollars } from '@/lib/format'
@@ -68,7 +69,11 @@ export const Route = createFileRoute('/app/permits')({
 
 function Permits() {
   const { role, org_id: orgId, loading: roleLoading } = useRole()
-  const [facilities, setFacilities] = useState<FacilityOption[]>([])
+  const {
+    allFacilities: facilities,
+    loading: facilitiesLoading,
+    error: facilitiesError,
+  } = useFacility()
   const [rows, setRows] = useState<PermitRow[]>([])
   const [facilityFilter, setFacilityFilter] = useState(ANY)
   const [loading, setLoading] = useState(true)
@@ -101,31 +106,24 @@ function Permits() {
   }
 
   const load = useCallback(async () => {
-    if (!orgId || !allowed) return
+    if (!orgId || !allowed || facilitiesLoading) return
     setLoading(true)
     setError(null)
 
-    const [permitResult, facilityResult] = await Promise.all([
-      supabase
-        .from('permits')
-        .select(
-          'id, facility_id, space_id, customer_id, monthly_rate_cents, currency, status, stripe_subscription_id, current_period_start, current_period_end, created_at',
-        )
-        .eq('org_id', orgId)
-        .is('archived_at', null)
-        .order('created_at', { ascending: false })
-        .limit(500),
-      supabase
-        .from('facilities')
-        .select('id, name')
-        .eq('org_id', orgId)
-        .order('name'),
-    ])
+    const permitResult = await supabase
+      .from('permits')
+      .select(
+        'id, facility_id, space_id, customer_id, monthly_rate_cents, currency, status, stripe_subscription_id, current_period_start, current_period_end, created_at',
+      )
+      .eq('org_id', orgId)
+      .is('archived_at', null)
+      .order('created_at', { ascending: false })
+      .limit(500)
 
-    if (permitResult.error || facilityResult.error) {
+    if (permitResult.error || facilitiesError) {
       setError(
         friendlyError(
-          permitResult.error ?? facilityResult.error,
+          permitResult.error ?? facilitiesError,
           'Permits could not be loaded. Please try again.',
         ),
       )
@@ -134,9 +132,7 @@ function Permits() {
     }
 
     const permits = permitResult.data ?? []
-    const facilityRows = (facilityResult.data ?? []) as FacilityOption[]
-    setFacilities(facilityRows)
-    const facilityName = new Map(facilityRows.map((f) => [f.id, f.name]))
+    const facilityName = new Map(facilities.map((f) => [f.id, f.name]))
 
     const spaceIds = [...new Set(permits.map((p) => p.space_id))]
     const customerIds = [...new Set(permits.map((p) => p.customer_id))]
@@ -180,7 +176,7 @@ function Permits() {
       })),
     )
     setLoading(false)
-  }, [orgId, allowed])
+  }, [orgId, allowed, facilities, facilitiesError, facilitiesLoading])
 
   useEffect(() => {
     if (!roleLoading) void Promise.resolve().then(load)

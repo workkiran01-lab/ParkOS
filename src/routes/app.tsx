@@ -23,7 +23,11 @@ import {
 } from 'lucide-react'
 import { AppShell } from '@/components/layout/AppShell'
 import { DashboardConnectionProvider } from '@/hooks/useDashboardConnection'
-import { FacilityProvider, type FacilityOption } from '@/hooks/useFacility'
+import {
+  FacilityProvider,
+  type FacilityOption,
+  type FacilitySummary,
+} from '@/hooks/useFacility'
 import { useAuth } from '@/hooks/useAuth'
 import { useRole } from '@/hooks/useRole'
 import { supabase } from '@/lib/supabase'
@@ -61,8 +65,12 @@ function AppLayout() {
   const { role, org_id: orgId, full_name: fullName } = useRole()
   const [hasCustomerRecord, setHasCustomerRecord] = useState(false)
   const [facilities, setFacilities] = useState<FacilityOption[]>([])
+  const [allFacilities, setAllFacilities] = useState<FacilitySummary[]>([])
   const [facilityId, setFacilityId] = useState('')
   const [facilitiesLoading, setFacilitiesLoading] = useState(true)
+  const [facilitiesError, setFacilitiesError] = useState<{
+    message: string
+  } | null>(null)
 
   const loadShellData = useCallback(async () => {
     if (!user || !orgId) return
@@ -77,15 +85,22 @@ function AppLayout() {
         .from('facilities')
         // timezone: the daily manifest bins by the facility's local day, not
         // the browser's.
-        .select('id, name, timezone')
+        .select('id, name, timezone, archived_at')
         .eq('org_id', orgId)
-        .is('archived_at', null)
         .order('name'),
     ])
     setHasCustomerRecord(!!customerResult.data)
-    const rows = (facilityResult.data ?? []) as FacilityOption[]
-    setFacilities(rows)
-    setFacilityId((current) => current || rows[0]?.id || '')
+    const rows = (facilityResult.data ?? []) as (FacilityOption & {
+      archived_at: string | null
+    })[]
+    const options = rows.map(({ id, name }) => ({ id, name }))
+    const activeOptions = rows
+      .filter((facility) => facility.archived_at === null)
+      .map(({ id, name, timezone }) => ({ id, name, timezone }))
+    setAllFacilities(options)
+    setFacilities(activeOptions)
+    setFacilityId((current) => current || activeOptions[0]?.id || '')
+    setFacilitiesError(facilityResult.error)
     setFacilitiesLoading(false)
   }, [orgId, user])
 
@@ -104,9 +119,11 @@ function AppLayout() {
     <FacilityProvider
       value={{
         facilities,
+        allFacilities,
         facilityId,
         setFacilityId,
         loading: facilitiesLoading,
+        error: facilitiesError,
       }}
     >
       <DashboardConnectionProvider>

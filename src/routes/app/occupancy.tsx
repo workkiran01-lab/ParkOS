@@ -15,6 +15,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { PageSpinner } from '@/components/ui/Spinner'
+import { useFacility } from '@/hooks/useFacility'
 import { useRole } from '@/hooks/useRole'
 import { friendlyError } from '@/lib/errors'
 import { dollars } from '@/lib/format'
@@ -30,7 +31,6 @@ import {
 } from '@/lib/occupancy'
 import { supabase } from '@/lib/supabase'
 
-type FacilityOption = { id: string; name: string }
 type Zone = { id: string; name: string; level: number | null }
 type Space = {
   id: string
@@ -66,7 +66,7 @@ export const Route = createFileRoute('/app/occupancy')({
 
 function Occupancy() {
   const { role, org_id: orgId, loading: roleLoading } = useRole()
-  const [facilities, setFacilities] = useState<FacilityOption[]>([])
+  const { facilities, error: facilitiesError } = useFacility()
   const [facilityId, setFacilityId] = useState('')
 
   const [zones, setZones] = useState<Zone[]>([])
@@ -94,26 +94,17 @@ function Occupancy() {
 
   const allowed = role === 'admin' || role === 'manager' || role === 'attendant'
 
-  const loadFacilities = useCallback(async () => {
-    if (!orgId || !allowed) return
-    const { data, error: loadError } = await supabase
-      .from('facilities')
-      .select('id, name')
-      .eq('org_id', orgId)
-      .is('archived_at', null)
-      .order('name')
-    if (loadError) {
-      setError(friendlyError(loadError, 'Facilities could not be loaded.'))
-      return
-    }
-    const options = (data ?? []) as FacilityOption[]
-    setFacilities(options)
-    setFacilityId((current) => current || (options[0]?.id ?? ''))
-  }, [orgId, allowed])
-
   useEffect(() => {
-    if (!roleLoading) void Promise.resolve().then(loadFacilities)
-  }, [loadFacilities, roleLoading])
+    if (roleLoading || !allowed) return
+    void Promise.resolve().then(() => {
+      if (facilitiesError) {
+        setError(
+          friendlyError(facilitiesError, 'Facilities could not be loaded.'),
+        )
+      }
+      setFacilityId((current) => current || (facilities[0]?.id ?? ''))
+    })
+  }, [allowed, facilities, facilitiesError, roleLoading])
 
   // One snapshot load for the selected facility: the grid building blocks
   // (zones, spaces, active holds, and the reservations/customers those holds
