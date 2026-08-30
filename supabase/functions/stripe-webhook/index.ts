@@ -2,15 +2,23 @@ import type Stripe from 'npm:stripe@^22'
 import {
   ConfigurationError,
   errorResponse,
-  isUuid,
   jsonResponse,
 } from '../_shared/http.ts'
 import {
   getStripeClient,
   getStripeWebhookSecret,
-  stripeObjectId,
   Stripe as StripeRuntime,
 } from '../_shared/stripe.ts'
+// Payload reading lives in a Stripe-SDK-free module so it can be unit-tested
+// under node; see stripe-payload.test.ts.
+import {
+  currencyOrNull,
+  integerOrNull,
+  metadataUuid,
+  normalizeInvoice,
+  stripeObjectId,
+  unixTimestamp,
+} from '../_shared/stripe-payload.ts'
 import { getAdminClient } from '../_shared/supabase.ts'
 import { issueReceiptForPayment } from '../_shared/receipt.ts'
 
@@ -36,6 +44,7 @@ const handledEventTypes = new Set([
   'customer.subscription.updated',
   'customer.subscription.deleted',
   'invoice.payment_failed',
+  'invoice.payment_succeeded',
 ])
 
 const cryptoProvider = StripeRuntime.createSubtleCryptoProvider()
@@ -68,6 +77,12 @@ Deno.serve(async (request) => {
 
     if (!handledEventTypes.has(event.type)) {
       return jsonResponse({ received: true, ignored: true }, 200, false)
+    }
+
+    // A settled subscription invoice is the only event that books permit money,
+    // so it goes to its own recorder rather than the permit STATE processor.
+    if (event.type === 'invoice.payment_succeeded') {
+      return await processInvoicePaymentSucceeded(event)
     }
 
     if (
@@ -124,7 +139,10 @@ Deno.serve(async (request) => {
       const reservationId = (result as Record<string, unknown>).reservation_id
       if (typeof paymentId === 'string' && typeof reservationId === 'string') {
         try {
-          await issueReceiptForPayment(getAdminClient(), { paymentId, reservationId })
+          await issueReceiptForPayment(getAdminClient(), {
+            paymentId,
+            reservationId,
+          })
         } catch {
           console.error('Receipt generation failed after a succeeded payment.')
         }
@@ -170,14 +188,11 @@ async function processSubscriptionEvent(event: Stripe.Event) {
     periodEnd = unixTimestamp(item?.current_period_end)
     reason = subscription.cancellation_details?.comment ?? null
   } else {
-    const invoice = event.data.object as unknown as Record<string, unknown>
-    const parent = objectOrNull(invoice.parent)
-    const details = objectOrNull(parent?.subscription_details)
-    subscriptionId = stripeObjectId(details?.subscription ?? invoice.subscription)
-    const metadata = objectOrNull(details?.metadata)
-    permitId = metadataUuid(
-      typeof metadata?.permit_id === 'string' ? metadata.permit_id : undefined,
+    const invoice = normalizeInvoice(
+      event.data.object as unknown as Record<string, unknown>,
     )
+    subscriptionId = invoice.subscriptionId
+    permitId = invoice.permitId
   }
 
   if (!permitId && !subscriptionId) {
@@ -199,7 +214,9 @@ async function processSubscriptionEvent(event: Stripe.Event) {
     },
   )
   if (error) {
-    console.error('Atomic Stripe subscription processing failed; Stripe should retry.')
+    console.error(
+      'Atomic Stripe subscription processing failed; Stripe should retry.',
+    )
     return errorResponse(
       'Subscription event processing is temporarily unavailable.',
       500,
@@ -210,7 +227,57 @@ async function processSubscriptionEvent(event: Stripe.Event) {
   return jsonResponse(
     {
       received: true,
-      processed: result && 'processed' in result ? result.processed === true : true,
+      processed:
+        result && 'processed' in result ? result.processed === true : true,
+    },
+    200,
+    false,
+  )
+}
+
+async function processInvoicePaymentSucceeded(event: Stripe.Event) {
+  const invoice = normalizeInvoice(
+    event.data.object as unknown as Record<string, unknown>,
+  )
+
+  // Deliberately NOT the 400 its sibling returns for a missing identifier. This
+  // endpoint receives every paid invoice on the Stripe account, and an invoice
+  // with no ParkOS subscription behind it is not a malformed payload -- it is
+  // simply not ours. A 400 here would make Stripe retry, and then alert, on
+  // somebody else's invoice.
+  if (!invoice.permitId && !invoice.subscriptionId) {
+    return jsonResponse({ received: true, ignored: true }, 200, false)
+  }
+  if (!invoice.invoiceId) {
+    console.error('A paid Stripe invoice arrived with no invoice id.')
+    return errorResponse('Unsupported Stripe invoice payload.', 400, false)
+  }
+
+  const { data, error } = await getAdminClient().rpc('record_permit_payment', {
+    p_event_id: event.id,
+    p_permit_id: invoice.permitId,
+    p_stripe_subscription_id: invoice.subscriptionId,
+    p_stripe_invoice_id: invoice.invoiceId,
+    p_amount_cents: invoice.amountPaidCents,
+    p_currency: invoice.currency,
+    p_stripe_payment_intent_id: invoice.paymentIntentId,
+    p_paid: invoice.paid,
+  })
+
+  if (error) {
+    console.error('Permit payment recording failed; Stripe should retry.')
+    return errorResponse(
+      'Payment event processing is temporarily unavailable.',
+      500,
+      false,
+    )
+  }
+  const result = data && typeof data === 'object' ? data : null
+  return jsonResponse(
+    {
+      received: true,
+      processed:
+        result && 'processed' in result ? result.processed === true : true,
     },
     200,
     false,
@@ -268,26 +335,4 @@ function normalizeEvent(event: Stripe.Event): NormalizedStripeEvent | null {
   }
 
   return null
-}
-
-function metadataUuid(value: string | undefined) {
-  return isUuid(value ?? null) ? value : null
-}
-
-function integerOrNull(value: number | null | undefined) {
-  return Number.isInteger(value) ? (value as number) : null
-}
-
-function currencyOrNull(value: string | null | undefined) {
-  return value && /^[A-Za-z]{3}$/.test(value) ? value.toUpperCase() : null
-}
-
-function unixTimestamp(value: number | null | undefined) {
-  return Number.isInteger(value) ? new Date((value as number) * 1_000).toISOString() : null
-}
-
-function objectOrNull(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === 'object'
-    ? (value as Record<string, unknown>)
-    : null
 }

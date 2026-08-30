@@ -21,13 +21,8 @@ export function getStripeWebhookSecret() {
   return webhookSecret
 }
 
-export function stripeObjectId(value: unknown) {
-  if (typeof value === 'string' && value) return value
-  if (value && typeof value === 'object' && 'id' in value) {
-    const id = value.id
-    return typeof id === 'string' && id ? id : null
-  }
-  return null
-}
+// stripeObjectId moved to ./stripe-payload.ts: it reads a payload rather than
+// talking to Stripe, and this module cannot be imported by a node test because
+// of the npm:stripe import above.
 
 export { Stripe }
