@@ -3,7 +3,7 @@
 -- version). Run this manually against parkos-dev after policy changes. Every block
 -- RAISES EXCEPTION on failure, so a failed check aborts execution with its message.
 --
--- Depends on the dev seed (20260819040100); like the seed, dev-project only.
+-- Depends on the dev seed (DEV_ONLY_seed_dev_orgs.sql); like the seed, dev-project only.
 -- Every check runs inside one transaction that is unconditionally rolled back;
 -- the final summary runs afterwards so the Management API returns visible proof.
 

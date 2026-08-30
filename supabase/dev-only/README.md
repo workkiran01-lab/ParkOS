@@ -8,7 +8,7 @@ Run a script manually only against the linked `parkos-dev` project. The installe
 Supabase CLI exposes file execution as `db query`:
 
 ```sh
-npx supabase db query --linked --file supabase/dev-only/20260819040100_seed_dev_orgs.sql
+npx supabase db query --linked --file supabase/dev-only/DEV_ONLY_seed_dev_orgs.sql
 npx supabase db query --linked --file supabase/dev-only/20260819050000_verify_rls_isolation.sql
 ```
 

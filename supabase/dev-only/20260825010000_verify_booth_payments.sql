@@ -6,7 +6,7 @@
 --   npm run test:db
 --   npx supabase db query --linked --file supabase/dev-only/20260825010000_verify_booth_payments.sql
 --
--- Depends on the dev seed (20260819040100) for its two orgs and their admin
+-- Depends on the dev seed (DEV_ONLY_seed_dev_orgs.sql) for its two orgs and their admin
 -- users; every other row it needs, it creates and then throws away:
 --   Org A (Harbor Park Group)  = aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa
 --   Org B (Pier Point Parking) = bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb
