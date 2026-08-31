@@ -267,6 +267,95 @@ const legacyInvoice = {
   assert.equal(invoicePaymentIntentId(chargeOnly), null)
 }
 
+// --- A full OUT-OF-BAND invoice body (invoice.paid only) --------------------
+// Marking an invoice paid_out_of_band "will result in no charge being made"
+// (Stripe, Pay an invoice), so there is no PaymentIntent to record and no
+// invoice.payment_succeeded is sent at all -- only invoice.paid. These bodies
+// must still normalize into a complete, bookable ledger row.
+{
+  // Basil shape: settled via `status`, and the payments list carries a
+  // non-PaymentIntent entry.
+  const basilOutOfBand = {
+    id: 'in_1QoobBasil',
+    object: 'invoice',
+    amount_due: 15000,
+    amount_paid: 15000,
+    amount_remaining: 0,
+    currency: 'usd',
+    status: 'paid',
+    parent: {
+      type: 'subscription_details',
+      subscription_details: {
+        subscription: 'sub_1QoobBasil',
+        metadata: { permit_id: PERMIT_ID },
+      },
+    },
+    payments: {
+      object: 'list',
+      has_more: false,
+      total_count: 1,
+      url: '/v1/invoice_payments',
+      data: [
+        {
+          id: 'inpay_1QoobBasil',
+          object: 'invoice_payment',
+          amount_paid: 15000,
+          currency: 'usd',
+          invoice: 'in_1QoobBasil',
+          is_default: true,
+          status: 'paid',
+          payment: { type: 'payment_record', payment_record: 'payrec_1Qoob' },
+        },
+      ],
+    },
+  }
+  assert.deepEqual(normalizeInvoice(basilOutOfBand), {
+    permitId: PERMIT_ID,
+    subscriptionId: 'sub_1QoobBasil',
+    invoiceId: 'in_1QoobBasil',
+    amountPaidCents: 15000,
+    currency: 'USD',
+    // The whole point: no charge was made, so this column is null and the
+    // ledger row is still complete without it.
+    paymentIntentId: null,
+    paid: true,
+  })
+
+  // Pre-Basil shape: the retired `paid_out_of_band` boolean, `paid: true`, and
+  // a null top-level payment_intent.
+  const legacyOutOfBand = {
+    id: 'in_1QoobLegacy',
+    object: 'invoice',
+    amount_paid: 15000,
+    currency: 'usd',
+    paid: true,
+    paid_out_of_band: true,
+    status: 'paid',
+    subscription: 'sub_1QoobLegacy',
+    payment_intent: null,
+    parent: {
+      subscription_details: {
+        subscription: 'sub_1QoobLegacy',
+        metadata: { permit_id: PERMIT_ID },
+      },
+    },
+  }
+  assert.deepEqual(normalizeInvoice(legacyOutOfBand), {
+    permitId: PERMIT_ID,
+    subscriptionId: 'sub_1QoobLegacy',
+    invoiceId: 'in_1QoobLegacy',
+    amountPaidCents: 15000,
+    currency: 'USD',
+    paymentIntentId: null,
+    paid: true,
+  })
+
+  // Both must clear record_permit_payment's p_paid gate, or the money is
+  // rejected as INVOICE_NOT_PAID exactly as the Basil bug did.
+  assert.equal(invoicePaid(basilOutOfBand), true)
+  assert.equal(invoicePaid(legacyOutOfBand), true)
+}
+
 // --- An expanded PaymentIntent object, not a bare id ------------------------
 {
   const expanded = {

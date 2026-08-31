@@ -45,6 +45,10 @@ const handledEventTypes = new Set([
   'customer.subscription.deleted',
   'invoice.payment_failed',
   'invoice.payment_succeeded',
+  // The superset of payment_succeeded: it ALSO fires when an invoice is marked
+  // paid out-of-band, which payment_succeeded never reports. Without it, money
+  // collected outside Stripe was booked nowhere and raised no error.
+  'invoice.paid',
 ])
 
 const cryptoProvider = StripeRuntime.createSubtleCryptoProvider()
@@ -81,8 +85,25 @@ Deno.serve(async (request) => {
 
     // A settled subscription invoice is the only event that books permit money,
     // so it goes to its own recorder rather than the permit STATE processor.
-    if (event.type === 'invoice.payment_succeeded') {
-      return await processInvoicePaymentSucceeded(event)
+    //
+    // BOTH events route here, and a normal payment therefore arrives TWICE --
+    // Stripe sends invoice.paid and invoice.payment_succeeded for every
+    // successful payment, carrying identical invoice data under DIFFERENT event
+    // ids. The processed_stripe_events claim does not collapse them; unique
+    // permit_payments.stripe_invoice_id does, so the second delivery returns
+    // duplicate_invoice and writes neither a payment row nor an audit row.
+    //
+    // Stripe recommends listening to invoice.paid INSTEAD of
+    // payment_succeeded. Deliberately not done: nothing in this repository can
+    // see which events the Dashboard endpoint actually subscribes to, and
+    // dropping payment_succeeded against an endpoint that does not send
+    // invoice.paid would silently stop all permit revenue -- the same failure
+    // shape being fixed here. Subscribing to both degrades safely instead.
+    if (
+      event.type === 'invoice.payment_succeeded' ||
+      event.type === 'invoice.paid'
+    ) {
+      return await processPaidInvoice(event)
     }
 
     if (
@@ -235,7 +256,7 @@ async function processSubscriptionEvent(event: Stripe.Event) {
   )
 }
 
-async function processInvoicePaymentSucceeded(event: Stripe.Event) {
+async function processPaidInvoice(event: Stripe.Event) {
   const invoice = normalizeInvoice(
     event.data.object as unknown as Record<string, unknown>,
   )
