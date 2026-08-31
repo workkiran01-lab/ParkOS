@@ -23,6 +23,28 @@ first — this file tracks work, not architecture.
   Decision #7 keeps the webhook the sole writer of cancellation state. Needs a periodic sweep
   that re-reads Stripe for permits with an outstanding request and drives them to a final state,
   or an explicit staff "reconcile now" action. Deliberately not built with the ordering fix.
+- **Permit reconciliation detects but does not remediate.**
+  `20260901000000_permit_event_ordering_guard.sql` added `report_permit_reconciliation()` and a
+  15-minute `parkos-permit-reconciliation` pg_cron job that logs a warning when it finds anything.
+  Both are read-only on purpose. The two classifications that matter cannot be resolved from
+  ParkOS state at all: `stuck_pending` is indistinguishable from a permit whose subscription
+  Stripe *did* create and whose `customer.subscription.created` was simply never delivered, and
+  `suspended_unverified` is indistinguishable from a genuinely unpaid invoice or a terminal
+  `incomplete_expired` subscription. Auto-abandoning the first would cancel a live, billing
+  subscription. Remediation therefore needs `subscriptions.retrieve`, and it cannot live in the
+  database: the Stripe key is Edge-Function-only and neither `pg_net` nor `http` is installed, so
+  a Stripe-calling reconciler can never be a pg_cron job. It also cannot simply re-invoke
+  `create-permit-subscription`, whose `parkos-permit-subscription:{permit_id}` idempotency key
+  Stripe prunes after 24 hours — past that, a retry bills the customer a second time. Build it as
+  an Edge Function that consumes this report, with a dry-run mode on first deploy.
+- **Two reordered `customer.subscription.updated` events are still unordered.**
+  The guard in `20260901000000` keeps a snapshot from lowering the permit status rank unless it
+  carries a real post-activation failure, which closes the reported `created`-after-`active` race
+  and the cancelled-permit resurrection alongside it. It cannot separate two `updated` events that
+  swap order while both carry post-activation statuses, because Stripe explicitly disclaims
+  `event.created` for ordering and the Subscription object exposes no version or modified-at
+  field. Settling that needs the authoritative object from `subscriptions.retrieve` in the webhook
+  handler — Edge Function work, tracked with the remediation entry above.
 - **Customer self-pay handoff at the booth doesn't exist.** Staff can collect cash or card-terminal
   payment directly, but the booth screen has no link or QR that lets the customer start Stripe
   Checkout on their own phone. This is separate from the receipt QR, which opens the staff-only
