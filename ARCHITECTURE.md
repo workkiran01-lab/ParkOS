@@ -209,3 +209,34 @@ table is written from `invoice.payment_succeeded` and a failed invoice suspends 
 recording no money. `report_revenue_split`'s `permit` row previously returned NULL with
 `recorded = false` and a note pointing here; it now returns real figures with `recorded = true`, which
 is visible to anyone comparing a report from before that migration.
+
+## Stripe API version pinning
+
+Edge functions import the Stripe SDK as `npm:stripe@22.6.0` — an exact version, in all four files
+that import it. There is no `deno.lock`, so a range would be re-resolved on every deploy. Within
+`^22` the range's own API version already moved twice (`22.0.0` ships `2026-03-25.dahlia`, `22.6.0`
+ships `2026-08-26.dahlia`, and the next release carries `2026-08-26.preview`), so a caret range moved
+the wire protocol, not just the library.
+
+`getStripeClient` also sets `apiVersion: '2026-08-26.dahlia'` explicitly. stripe-node does not fall
+back to the account default when the option is omitted — it sends its own baked-in `ApiVersion`
+either way — so this is a no-op against the pinned SDK by design. It exists so the code states what
+it expects instead of inheriting it, and so bumping the SDK surfaces a version change as a visible
+diff rather than a silent one.
+
+**These two pins govern outbound calls only.** A webhook body is rendered at the API version
+configured on the ENDPOINT in the Stripe Dashboard, which is a separate setting the SDK cannot read
+or influence. Nothing in this repository can tell you what that version is, and no check here will
+fail if it moves. That is not an oversight — it is the split that produced the Basil bug, where a
+`2025-03-31.basil` endpoint stopped sending the top-level `paid` field and every permit invoice
+began failing `INVOICE_NOT_PAID` with no error anywhere upstream.
+
+The two versions must therefore be kept aligned deliberately, by a human, whenever either moves:
+
+- Changing the endpoint version in the Dashboard requires re-checking the payload readers.
+- Bumping the pinned SDK requires re-checking the endpoint version alongside it.
+
+Until that alignment is machine-checkable, the real defence on the inbound path stays where it is:
+the readers in `supabase/functions/_shared/stripe-payload.ts` accept both the pre-Basil and
+post-Basil shapes of every field ParkOS depends on, and `stripe-payload.test.ts` exercises both
+against recorded payloads. Pinning the SDK gives that path no protection whatsoever.

@@ -1,4 +1,4 @@
-import type Stripe from 'npm:stripe@^22'
+import type Stripe from 'npm:stripe@22.6.0'
 import {
   ConfigurationError,
   errorResponse,

@@ -1,4 +1,4 @@
-import Stripe from 'npm:stripe@^22'
+import Stripe from 'npm:stripe@22.6.0'
 import { ConfigurationError } from './http.ts'
 
 let cachedStripe: Stripe | null = null
@@ -8,7 +8,16 @@ export function getStripeClient() {
     const secretKey = Deno.env.get('STRIPE_SECRET_KEY')?.trim()
     if (!secretKey)
       throw new ConfigurationError('Payments are not configured yet.')
-    cachedStripe = new Stripe(secretKey, { maxNetworkRetries: 2 })
+    // Pinned deliberately, and to the same version the pinned SDK already
+    // sends by default -- stripe-node uses its own baked-in ApiVersion when the
+    // option is omitted, it does not fall back to the account default. Stating
+    // it here changes nothing today; it stops an SDK bump from silently moving
+    // the wire version, which is what `npm:stripe@^22` allowed. See
+    // ARCHITECTURE.md, "Stripe API version pinning".
+    cachedStripe = new Stripe(secretKey, {
+      apiVersion: '2026-08-26.dahlia',
+      maxNetworkRetries: 2,
+    })
   }
 
   return cachedStripe
