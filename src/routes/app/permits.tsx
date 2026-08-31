@@ -473,12 +473,27 @@ function IssuePermitForm({
     setSubmitting(false)
 
     if (subError) {
-      toast.warning('Permit issued, but Stripe setup did not start.')
+      // Compensate: the permit is still 'pending' and holding the space, and no
+      // Stripe subscription exists. Release both so the space is sellable again
+      // rather than leaving free parking on an unavailable space. The RPC
+      // refuses if a subscription id has since appeared, which means Stripe
+      // actually succeeded and the webhook owns the permit.
+      const { error: abandonError } = await supabase.rpc('abandon_pending_permit', {
+        p_permit_id: permitId,
+        p_reason: 'Stripe subscription setup failed',
+      })
       setError(
         await edgeFunctionError(
           subError,
-          'The permit was issued, but its subscription could not be started. Open the permit to retry billing.',
+          abandonError
+            ? 'The subscription could not be started, and the permit could not be rolled back. Check the permit before reissuing.'
+            : 'The subscription could not be started, so the permit was rolled back and the space released. Try again.',
         ),
+      )
+      toast.error(
+        abandonError
+          ? 'Stripe setup failed and rollback failed — check the permit.'
+          : 'Stripe setup failed — the permit was rolled back.',
       )
       onIssued()
       return
@@ -783,10 +798,12 @@ function PermitStatusBadge({
   // a cancellation is already in flight rather than clicking Cancel again.
   if (isCancelling(status, cancellationRequestedAt))
     return <Badge variant="secondary">Cancelling</Badge>
+  // 'pending' means no Stripe subscription exists yet, so it entitles nothing.
+  // It must never render like 'active'.
   const variant =
     status === 'active'
       ? 'default'
-      : status === 'suspended'
+      : status === 'suspended' || status === 'pending'
         ? 'secondary'
         : 'outline'
   return <Badge variant={variant}>{label(status)}</Badge>

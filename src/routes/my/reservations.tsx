@@ -485,7 +485,8 @@ function PermitsSection({ permits }: { permits: PermitRow[] }) {
                     variant={
                       permit.status === 'active'
                         ? 'default'
-                        : permit.status === 'suspended'
+                        : permit.status === 'suspended' ||
+                            permit.status === 'pending'
                           ? 'secondary'
                           : 'outline'
                     }

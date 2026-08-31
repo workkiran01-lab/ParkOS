@@ -44,13 +44,19 @@ function MySettings() {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   // Mirrors the server-side block in deactivate_account(): anything not yet
-  // cancelled still has a live subscription behind it.
+  // cancelled still has a live subscription behind it. 'pending' is excluded
+  // on both sides -- it means Stripe setup never completed, so no subscription
+  // exists to outlive the account. Counting it would block deactivation on a
+  // permit that bills nobody.
   const [billedPermits, setBilledPermits] = useState<number | null>(null)
 
   const loadPermits = useCallback(async () => {
     const { data } = await supabase.rpc('get_my_permits')
     const rows = (data ?? []) as { status: string }[]
-    setBilledPermits(rows.filter((row) => row.status !== 'cancelled').length)
+    setBilledPermits(
+      rows.filter((row) => row.status !== 'cancelled' && row.status !== 'pending')
+        .length,
+    )
   }, [])
 
   useEffect(() => {

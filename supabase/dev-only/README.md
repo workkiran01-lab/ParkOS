@@ -11,6 +11,7 @@ Supabase CLI exposes file execution as `db query`:
 npx supabase db query --linked --file supabase/dev-only/DEV_ONLY_seed_dev_orgs.sql
 npx supabase db query --linked --file supabase/dev-only/DEV_ONLY_verify_rls_isolation.sql
 npx supabase db query --linked --file supabase/dev-only/DEV_ONLY_verify_permit_cancellation.sql
+npx supabase db query --linked --file supabase/dev-only/DEV_ONLY_verify_permit_issuance.sql
 ```
 
 Never run the seed against production. The seed is intended for a fresh dev
