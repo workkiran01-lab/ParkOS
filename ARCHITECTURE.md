@@ -195,7 +195,17 @@ therefore a separate ledger row. Payments that arrive after a permit was cancell
 recorded because the ledger describes money Stripe collected, not whether collection should have
 happened.
 
-The v1 revenue-reporting functions do not yet aggregate `permit_payments`; they still report
-reservation Checkout and booth collections only. Recording and reporting are separate concerns:
-the ledger is now durable and reconcilable, while adding permit revenue to facility/date reports
-remains launch work tracked in `docs/roadmap.md`.
+The revenue-reporting functions aggregate `permit_payments` as of
+`20260902000000_permit_revenue_reporting.sql`. `facility_dashboard_summary`,
+`report_revenue_by_period`, `report_revenue_by_space_type` and `report_revenue_split` each gained a
+permit branch, so an operator total is no longer understated by the permit take. Permits do not hang
+off a reservation the way booth payments do — they carry `facility_id` and `space_id` directly — so
+the permit branch joins `permit_payments -> permits -> facilities` and never touches `reservations`.
+A permit counts against the type of the space it holds.
+
+Only `succeeded` permit payments count, matching how the `payments` branches filter. `refunded_count`
+stays reservation-only: `permit_payments.status` is constrained to `succeeded` alone, because the
+table is written from `invoice.payment_succeeded` and a failed invoice suspends the permit while
+recording no money. `report_revenue_split`'s `permit` row previously returned NULL with
+`recorded = false` and a note pointing here; it now returns real figures with `recorded = true`, which
+is visible to anyone comparing a report from before that migration.

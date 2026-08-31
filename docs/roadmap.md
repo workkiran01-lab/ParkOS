@@ -6,12 +6,6 @@ first — this file tracks work, not architecture.
 
 ## Known gaps (should resolve before real launch)
 
-- **Permit payments are recorded but still absent from revenue reporting.**
-  `20260829000000_permit_payments.sql` and the Stripe webhook now persist each successful monthly
-  invoice in an idempotent, audited ledger. The dashboard and `report_*` functions still combine
-  only reservation `payments` and `booth_payments`, so their displayed totals remain understated
-  by permit revenue. Extend those functions (and their online/booth breakdown contract) before
-  treating the operator reports as total revenue.
 - **No reconciliation for a permit cancellation Stripe confirmed but no webhook completed.**
   Cancelling a Stripe-billed permit now calls Stripe first and lets
   `customer.subscription.deleted` write the cancellation, so a failed Stripe call leaves the

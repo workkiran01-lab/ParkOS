@@ -47,6 +47,8 @@ type RevenueRow = {
   booth_cash_revenue_cents: number
   booth_card_payments_count: number
   booth_card_revenue_cents: number
+  permit_payments_count: number
+  permit_revenue_cents: number
 }
 type OccupancyRow = {
   bucket: string
@@ -70,6 +72,8 @@ type SpaceTypeRow = {
   booth_cash_revenue_cents: number
   booth_card_payments_count: number
   booth_card_revenue_cents: number
+  permit_payments_count: number
+  permit_revenue_cents: number
 }
 type SplitRow = {
   category: string
@@ -206,6 +210,8 @@ function Reports() {
         booth_cash_revenue_cents: num(r.booth_cash_revenue_cents),
         booth_card_payments_count: num(r.booth_card_payments_count),
         booth_card_revenue_cents: num(r.booth_card_revenue_cents),
+        permit_payments_count: num(r.permit_payments_count),
+        permit_revenue_cents: num(r.permit_revenue_cents),
       })),
     )
     setOccupancy(
@@ -238,6 +244,8 @@ function Reports() {
         booth_cash_revenue_cents: num(r.booth_cash_revenue_cents),
         booth_card_payments_count: num(r.booth_card_payments_count),
         booth_card_revenue_cents: num(r.booth_card_revenue_cents),
+        permit_payments_count: num(r.permit_payments_count),
+        permit_revenue_cents: num(r.permit_revenue_cents),
       })),
     )
     setSplit(
@@ -275,8 +283,9 @@ function Reports() {
           stripe: sum.stripe + row.stripe_revenue_cents,
           cash: sum.cash + row.booth_cash_revenue_cents,
           boothCard: sum.boothCard + row.booth_card_revenue_cents,
+          permit: sum.permit + row.permit_revenue_cents,
         }),
-        { total: 0, stripe: 0, cash: 0, boothCard: 0 },
+        { total: 0, stripe: 0, cash: 0, boothCard: 0, permit: 0 },
       ),
     [revenue],
   )
@@ -415,13 +424,15 @@ function Reports() {
           label="Total revenue"
           value={dollars(revenueTotals.total)}
           hint={
-            loading ? 'Loading…' : 'Settled reservation payments, hourly only'
+            loading
+              ? 'Loading…'
+              : 'All settled collections, including monthly permits'
           }
         />
         <StatTile
           label="Online card"
           value={dollars(revenueTotals.stripe)}
-          hint="Stripe-confirmed collection"
+          hint="Stripe-confirmed collection on reservations"
         />
         <StatTile
           label="Booth cash"
@@ -432,6 +443,11 @@ function Reports() {
           label="Booth card"
           value={dollars(revenueTotals.boothCard)}
           hint="Card-terminal collection recorded by staff"
+        />
+        <StatTile
+          label="Monthly permits"
+          value={dollars(revenueTotals.permit)}
+          hint="Settled permit subscription invoices"
         />
         <StatTile
           label="Avg reservation"
@@ -479,6 +495,14 @@ function Reports() {
               header: 'Booth card revenue (cents)',
               value: (r) => r.booth_card_revenue_cents,
             },
+            {
+              header: 'Permit payments',
+              value: (r) => r.permit_payments_count,
+            },
+            {
+              header: 'Permit revenue (cents)',
+              value: (r) => r.permit_revenue_cents,
+            },
             { header: 'Refunded payments', value: (r) => r.refunded_count },
           ])
         }
@@ -519,7 +543,7 @@ function Reports() {
 
       <ReportSection
         title="Revenue by space type"
-        description="Settled reservation payments, split by the type of space booked."
+        description="All settled collections, split by space type. A permit counts against the type of the space it holds."
         downloadDisabled={bySpaceType.length === 0}
         onDownload={() =>
           download('revenue-by-space-type', bySpaceType, [
@@ -551,6 +575,14 @@ function Reports() {
               header: 'Booth card revenue (cents)',
               value: (r) => r.booth_card_revenue_cents,
             },
+            {
+              header: 'Permit payments',
+              value: (r) => r.permit_payments_count,
+            },
+            {
+              header: 'Permit revenue (cents)',
+              value: (r) => r.permit_revenue_cents,
+            },
           ])
         }
       >
@@ -577,7 +609,8 @@ function Reports() {
                 <p className="text-xs text-muted-foreground">
                   Online {dollars(row.stripe_revenue_cents)} · cash{' '}
                   {dollars(row.booth_cash_revenue_cents)} · booth card{' '}
-                  {dollars(row.booth_card_revenue_cents)}
+                  {dollars(row.booth_card_revenue_cents)} · permits{' '}
+                  {dollars(row.permit_revenue_cents)}
                 </p>
                 <div className="h-2 overflow-hidden rounded-full bg-muted">
                   <div
@@ -600,6 +633,8 @@ function Reports() {
         onDownload={() =>
           download('permits-vs-hourly', split, [
             { header: 'Category', value: (r) => r.category },
+            // Still gated on `recorded` rather than dropped: the column is the
+            // contract for "this figure is real", and both rows now set it.
             {
               header: 'Revenue (cents)',
               value: (r) => (r.recorded ? r.revenue_cents : ''),
@@ -644,14 +679,13 @@ function Reports() {
               Monthly permits
               <p className="mt-1 max-w-md text-xs font-normal text-muted-foreground">
                 {permit?.note ??
-                  'Not recorded - see known gap in ARCHITECTURE.md'}
-                . Successful subscription charges are never written to the
-                database, so this is excluded from the total revenue card rather
-                than shown as zero.
+                  `Settled subscription invoices, collected online. Online ${dollars(
+                    permit?.stripe_revenue_cents ?? 0,
+                  )}.`}
               </p>
             </dt>
-            <dd className="text-lg font-semibold text-muted-foreground">
-              &mdash;
+            <dd className="text-lg font-semibold tabular-nums">
+              {dollars(permit?.revenue_cents ?? 0)}
             </dd>
           </div>
         </dl>

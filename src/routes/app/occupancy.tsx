@@ -58,6 +58,7 @@ type RevenueBreakdown = {
   stripe: number
   cash: number
   boothCard: number
+  permit: number
 }
 
 export const Route = createFileRoute('/app/occupancy')({
@@ -83,6 +84,7 @@ function Occupancy() {
     stripe: 0,
     cash: 0,
     boothCard: 0,
+    permit: 0,
   })
   const [arrivals, setArrivals] = useState<ListRow[]>([])
   const [departures, setDepartures] = useState<ListRow[]>([])
@@ -243,6 +245,7 @@ function Occupancy() {
       stripe: Number(revenueRow?.today_stripe_revenue_cents ?? 0),
       cash: Number(revenueRow?.today_booth_cash_revenue_cents ?? 0),
       boothCard: Number(revenueRow?.today_booth_card_revenue_cents ?? 0),
+      permit: Number(revenueRow?.today_permit_revenue_cents ?? 0),
     })
     setArrivals(
       (arr.data ?? []).map((r: Record<string, unknown>) => ({
@@ -436,7 +439,7 @@ function Occupancy() {
         <StatTile
           label="Today's revenue"
           value={dollars(revenue.total)}
-          hint={`online ${dollars(revenue.stripe)} · cash ${dollars(revenue.cash)} · booth card ${dollars(revenue.boothCard)}`}
+          hint={`online ${dollars(revenue.stripe)} · cash ${dollars(revenue.cash)} · booth card ${dollars(revenue.boothCard)} · permits ${dollars(revenue.permit)}`}
         />
       </div>
 
