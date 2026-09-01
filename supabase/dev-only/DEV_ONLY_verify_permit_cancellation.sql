@@ -16,6 +16,17 @@
 --   FP2  Stripe ok, no webhook   -> permit still active, hold intact, not silently cancelled
 --   FP3  operator cancels twice  -> idempotent, timestamp stable, one audit row
 --   FP4  browser closes mid-flow -> webhook alone completes it, no browser involved
+--
+-- SETUP reaches the billed state the way production does, and nothing here
+-- writes stripe_subscription_id by hand. issue_permit leaves a permit 'pending'
+-- (20260831000000) and the webhook is that column's only writer, so forging it
+-- produced pending + subscription id -- the state that migration rules out and
+-- report_permit_reconciliation reports as 'pending_with_subscription'. Two
+-- events get there for real, exactly as create-permit-subscription drives them:
+-- the subscription is created with payment_behavior 'default_incomplete', so
+-- 'created' carries 'incomplete' and only reaches 'suspended'; the customer then
+-- pays and 'updated' carries 'active'. That second event is the Stripe
+-- confirmation step, and skipping it is why FP1-FP4 never saw an active permit.
 
 do $$
 declare
@@ -29,6 +40,8 @@ declare
   v_req1 timestamptz; v_req2 timestamptz;
   v_cancelled_at timestamptz;
   v_event text := 'evt_dev_permit_cancel_' || substr(md5(random()::text), 1, 12);
+  v_sub text := 'sub_dev_cancel_' || substr(md5(random()::text), 1, 12);
+  v_sub_written text;
 begin
   begin
     insert into auth.users
@@ -61,10 +74,29 @@ begin
                                v_start, 15000, 'USD') p;
 
     execute format('set local role %I', v_role);
-    -- Give it a subscription id so it looks like a Stripe-billed permit.
-    update public.permits
-       set stripe_subscription_id = 'sub_dev_' || substr(md5(v_permit::text), 1, 16)
-     where id = v_permit;
+    perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
+
+    -- Stripe confirmation, both halves. 'created' carries 'incomplete' and lands
+    -- on suspended; 'updated' carries 'active' once the first invoice is paid.
+    -- These two calls are the only thing that may write stripe_subscription_id.
+    perform public.process_stripe_subscription_event(
+      v_event || '_created', 'customer.subscription.created', v_permit,
+      v_sub, 'incomplete', null, null, 'setup: Stripe subscription created');
+    perform public.process_stripe_subscription_event(
+      v_event || '_active', 'customer.subscription.updated', v_permit,
+      v_sub, 'active', v_start, v_start + interval '1 month',
+      'setup: first invoice paid');
+
+    select status, stripe_subscription_id into v_status, v_sub_written
+      from public.permits where id = v_permit;
+    if v_status <> 'active' or v_sub_written is distinct from v_sub then
+      raise exception 'SETUP FAIL: permit is % holding %, expected active holding %',
+        v_status, coalesce(v_sub_written, 'NULL'), v_sub; end if;
+    -- The state the old fixture forged must be impossible even now.
+    if exists (select 1 from public.report_permit_reconciliation(0) r
+                where r.permit_id = v_permit
+                  and r.classification = 'pending_with_subscription') then
+      raise exception 'SETUP FAIL: fixture built an invariant-violating permit'; end if;
 
     select count(*) into v_audit_before from public.audit_log where target_id = v_permit;
 
