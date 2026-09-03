@@ -146,6 +146,19 @@ Deno.serve(async (request) => {
 
     const result = data && typeof data === 'object' ? data : null
 
+    // A charge with no ParkOS payments row behind it is not ours to apply, and
+    // process_stripe_event now reports that instead of raising (20260905000000).
+    // Answering 200 is what stops Stripe retrying it for days -- so leave a
+    // trace, or a reservation charge that genuinely should have matched would
+    // vanish in silence. Event type only, to match the id-free logging here.
+    if (
+      (result as Record<string, unknown> | null)?.outcome === 'payment_not_found'
+    ) {
+      console.warn(
+        `Stripe ${normalized.eventType} matched no ParkOS payment; acknowledged without applying.`,
+      )
+    }
+
     // A newly-succeeded reservation payment gets an itemized receipt. Best-effort
     // and after the payment is committed: a receipt failure must not 500 (Stripe
     // would retry the already-settled payment). issueReceiptForPayment is
