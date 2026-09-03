@@ -57,9 +57,13 @@ begin
                        'process_stripe_event',
                        'check_in_reservation','check_in_walk_in','check_out_reservation',
                        'issue_permit','cancel_permit','get_my_permits',
-                       'process_stripe_subscription_event')
+                       'process_stripe_subscription_event',
+                       -- +2 for the refund ledgers: both write money and both
+                       -- must stay SECURITY DEFINER, since neither table grants
+                       -- UPDATE to authenticated.
+                       'refund_booth_payment','record_permit_refund')
       and p.prosecdef;
-  if v <> 23 then
+  if v <> 25 then
     raise exception 'CHECK0 FAIL: helper functions missing or not SECURITY DEFINER (found %)', v;
   end if;
 
@@ -71,7 +75,7 @@ begin
   if v <> 1 then
     raise exception 'CHECK0 FAIL: is_own_customer missing or wrongly SECURITY DEFINER';
   end if;
-  raise notice 'CHECK0 PASS: 21 RLS tables, 61 policies, 23 SECURITY DEFINER functions';
+  raise notice 'CHECK0 PASS: 21 RLS tables, 61 policies, 25 SECURITY DEFINER functions';
 end $$;
 
 -- ---------------------------------------------------------------------------
@@ -1275,7 +1279,7 @@ rollback;
 -- completes, return an explicit, machine-visible summary for CI/manual evidence.
 select check_name, result
 from (values
-  ('CHECK0',  'PASS: 21 RLS tables, 61 policies, 23 SECURITY DEFINER functions'),
+  ('CHECK0',  'PASS: 21 RLS tables, 61 policies, 25 SECURITY DEFINER functions'),
   ('CHECK0b', 'PASS: authenticated has normal DML grants; permits is SELECT-only'),
   ('CHECK0c', 'PASS: payment writes and Stripe event processing are service-role-only'),
   ('CHECK1',  'PASS: Org A sees exactly 2 facilities / 165 spaces, all Org A'),

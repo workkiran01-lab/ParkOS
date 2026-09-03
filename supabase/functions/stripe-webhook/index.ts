@@ -146,14 +146,15 @@ Deno.serve(async (request) => {
 
     const result = data && typeof data === 'object' ? data : null
 
-    // A charge with no ParkOS payments row behind it is not ours to apply, and
-    // process_stripe_event now reports that instead of raising (20260905000000).
-    // Answering 200 is what stops Stripe retrying it for days -- so leave a
-    // trace, or a reservation charge that genuinely should have matched would
-    // vanish in silence. Event type only, to match the id-free logging here.
+    // A charge with no public.payments row behind it is not a reservation
+    // payment. 20260905000000 made that answer instead of raising; now it is
+    // also the hand-off point, because a permit refund lands here: permit money
+    // lives in permit_payments and its charge can never resolve above.
     if (
       (result as Record<string, unknown> | null)?.outcome === 'payment_not_found'
     ) {
+      if (normalized.eventType === 'charge.refunded')
+        return await processPermitRefund(event, normalized)
       console.warn(
         `Stripe ${normalized.eventType} matched no ParkOS payment; acknowledged without applying.`,
       )
@@ -264,6 +265,57 @@ async function processSubscriptionEvent(event: Stripe.Event) {
       processed:
         result && 'processed' in result ? result.processed === true : true,
     },
+    200,
+    false,
+  )
+}
+
+// The second half of the charge.refunded route: the charge did not belong to a
+// reservation, so try the permit ledger before giving up. Resolution is by
+// PaymentIntent id -- charge.refunded carries the CHARGE's metadata, never the
+// refund's, so the permit_payment_id the refund endpoint attached is not
+// readable here. Still answers 200 on a miss: an unresolvable charge must never
+// put this endpoint back into a retry loop (20260905000000).
+async function processPermitRefund(
+  event: Stripe.Event,
+  normalized: NormalizedStripeEvent,
+) {
+  const { data, error } = await getAdminClient().rpc('record_permit_refund', {
+    p_event_id: event.id,
+    p_stripe_payment_intent_id: normalized.paymentIntentId,
+    p_amount_cents: normalized.amountCents,
+    p_amount_refunded_cents: normalized.amountRefundedCents,
+  })
+
+  if (error) {
+    console.error('Permit refund recording failed; Stripe should retry.')
+    return errorResponse(
+      'Payment event processing is temporarily unavailable.',
+      500,
+      false,
+    )
+  }
+
+  const result = data && typeof data === 'object'
+    ? (data as Record<string, unknown>)
+    : null
+  const outcome = result?.outcome
+
+  // Both are deliberate 200s. 'permit_payment_not_found' is a charge belonging
+  // to neither ledger; 'partial_refund_not_supported' is a Dashboard partial
+  // against a permit, which v1 does not record. Each is logged because each
+  // means money moved in Stripe that ParkOS did not write down.
+  if (outcome === 'permit_payment_not_found')
+    console.warn(
+      'Stripe charge.refunded matched no ParkOS payment; acknowledged without applying.',
+    )
+  else if (outcome === 'partial_refund_not_supported')
+    console.warn(
+      'A partial permit refund was not recorded; ParkOS records full reversals only.',
+    )
+
+  return jsonResponse(
+    { received: true, processed: result?.processed === true },
     200,
     false,
   )

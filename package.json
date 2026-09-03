@@ -18,6 +18,7 @@
     "verify:invoice-paid": "supabase db query --linked --file supabase/dev-only/20260903000000_verify_invoice_paid.sql",
     "verify:dead-branch": "supabase db query --linked --file supabase/dev-only/20260904000000_verify_dead_branch_removed.sql",
     "verify:unresolved-payment": "supabase db query --linked --file supabase/dev-only/20260905000000_verify_unresolved_payment.sql",
+    "verify:refund-ledgers": "supabase db query --linked --file supabase/dev-only/20260906000000_verify_refund_ledgers.sql",
     "verify:permit-cancellation": "supabase db query --linked --file supabase/dev-only/DEV_ONLY_verify_permit_cancellation.sql",
     "verify:permit-issuance": "supabase db query --linked --file supabase/dev-only/DEV_ONLY_verify_permit_issuance.sql",
     "verify:rls": "supabase db query --linked --file supabase/dev-only/DEV_ONLY_verify_rls_isolation.sql",
