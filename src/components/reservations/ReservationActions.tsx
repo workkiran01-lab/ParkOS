@@ -120,7 +120,9 @@ export function ReservationActions({
     })
     setBusy(false)
     if (extendError) {
-      setError(friendlyError(extendError, 'The reservation could not be extended.'))
+      setError(
+        friendlyError(extendError, 'The reservation could not be extended.'),
+      )
       return
     }
     setExtendOpen(false)
@@ -129,8 +131,38 @@ export function ReservationActions({
     await onDone()
   }
 
+  /**
+   * Staff-only, pending-only. Until this existed, confirm_reservation had zero
+   * callers anywhere in the codebase and pending -> confirmed happened ONLY via
+   * the Stripe webhook. That left any booth-paid or deliberately-unpaid
+   * scheduled booking with no route out of `pending`, so parkos-no-show-sweep
+   * (pg_cron, every 5 min) flipped it to no_show at start + grace and released
+   * the space.
+   */
+  async function confirm() {
+    setBusy(true)
+    setError(null)
+    const { error: confirmError } = await supabase.rpc('confirm_reservation', {
+      p_reservation_id: reservationId,
+    })
+    setBusy(false)
+    if (confirmError) {
+      setError(
+        friendlyError(confirmError, 'The reservation could not be confirmed.'),
+      )
+      return
+    }
+    toast.success('Reservation confirmed')
+    await onDone()
+  }
+
   return (
     <div className="flex flex-wrap gap-2">
+      {isStaff && status === 'pending' && (
+        <Button size="sm" variant="outline" disabled={busy} onClick={confirm}>
+          {busy ? 'Confirming…' : 'Confirm'}
+        </Button>
+      )}
       {allowExtend && (
         <Button
           size="sm"
@@ -230,7 +262,11 @@ export function ReservationActions({
                   {busy ? 'Extending…' : 'Confirm extend'}
                 </Button>
               ) : (
-                <Button variant="outline" disabled={busy} onClick={previewExtend}>
+                <Button
+                  variant="outline"
+                  disabled={busy}
+                  onClick={previewExtend}
+                >
                   {busy ? 'Pricing…' : 'Preview new total'}
                 </Button>
               )}

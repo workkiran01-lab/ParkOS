@@ -34,6 +34,7 @@ import { Route as CheckinBookingCodeRouteImport } from './routes/checkin/$bookin
 import { Route as MyReservationsRouteImport } from './routes/my/reservations'
 import { Route as MySettingsRouteImport } from './routes/my/settings'
 import { Route as AppBookingManifestRouteImport } from './routes/app/booking/manifest'
+import { Route as AppBookingNewRouteImport } from './routes/app/booking/new'
 import { Route as AppFacilitiesIndexRouteImport } from './routes/app/facilities/index'
 import { Route as AppFacilitiesFacilityIdRouteImport } from './routes/app/facilities/$facilityId'
 
@@ -162,6 +163,11 @@ const AppBookingManifestRoute = AppBookingManifestRouteImport.update({
   path: '/booking/manifest',
   getParentRoute: () => AppRoute,
 } as any)
+const AppBookingNewRoute = AppBookingNewRouteImport.update({
+  id: '/booking/new',
+  path: '/booking/new',
+  getParentRoute: () => AppRoute,
+} as any)
 const AppFacilitiesIndexRoute = AppFacilitiesIndexRouteImport.update({
   id: '/facilities/',
   path: '/facilities/',
@@ -199,6 +205,7 @@ export interface FileRoutesByFullPath {
   '/app/': typeof AppIndexRoute
   '/attendant/': typeof AttendantIndexRoute
   '/app/booking/manifest': typeof AppBookingManifestRoute
+  '/app/booking/new': typeof AppBookingNewRoute
   '/app/facilities/$facilityId': typeof AppFacilitiesFacilityIdRoute
   '/app/facilities/': typeof AppFacilitiesIndexRoute
 }
@@ -226,6 +233,7 @@ export interface FileRoutesByTo {
   '/app': typeof AppIndexRoute
   '/attendant': typeof AttendantIndexRoute
   '/app/booking/manifest': typeof AppBookingManifestRoute
+  '/app/booking/new': typeof AppBookingNewRoute
   '/app/facilities/$facilityId': typeof AppFacilitiesFacilityIdRoute
   '/app/facilities': typeof AppFacilitiesIndexRoute
 }
@@ -256,6 +264,7 @@ export interface FileRoutesById {
   '/app/': typeof AppIndexRoute
   '/attendant/': typeof AttendantIndexRoute
   '/app/booking/manifest': typeof AppBookingManifestRoute
+  '/app/booking/new': typeof AppBookingNewRoute
   '/app/facilities/$facilityId': typeof AppFacilitiesFacilityIdRoute
   '/app/facilities/': typeof AppFacilitiesIndexRoute
 }
@@ -287,6 +296,7 @@ export interface FileRouteTypes {
     | '/app/'
     | '/attendant/'
     | '/app/booking/manifest'
+    | '/app/booking/new'
     | '/app/facilities/$facilityId'
     | '/app/facilities/'
   fileRoutesByTo: FileRoutesByTo
@@ -314,6 +324,7 @@ export interface FileRouteTypes {
     | '/app'
     | '/attendant'
     | '/app/booking/manifest'
+    | '/app/booking/new'
     | '/app/facilities/$facilityId'
     | '/app/facilities'
   id:
@@ -343,6 +354,7 @@ export interface FileRouteTypes {
     | '/app/'
     | '/attendant/'
     | '/app/booking/manifest'
+    | '/app/booking/new'
     | '/app/facilities/$facilityId'
     | '/app/facilities/'
   fileRoutesById: FileRoutesById
@@ -539,6 +551,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppBookingManifestRouteImport
       parentRoute: typeof AppRoute
     }
+    '/app/booking/new': {
+      id: '/app/booking/new'
+      path: '/booking/new'
+      fullPath: '/app/booking/new'
+      preLoaderRoute: typeof AppBookingNewRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/app/facilities/': {
       id: '/app/facilities/'
       path: '/facilities'
@@ -568,6 +587,7 @@ interface AppRouteChildren {
   AppStaffRoute: typeof AppStaffRoute
   AppIndexRoute: typeof AppIndexRoute
   AppBookingManifestRoute: typeof AppBookingManifestRoute
+  AppBookingNewRoute: typeof AppBookingNewRoute
   AppFacilitiesFacilityIdRoute: typeof AppFacilitiesFacilityIdRoute
   AppFacilitiesIndexRoute: typeof AppFacilitiesIndexRoute
 }
@@ -584,6 +604,7 @@ const AppRouteChildren: AppRouteChildren = {
   AppStaffRoute: AppStaffRoute,
   AppIndexRoute: AppIndexRoute,
   AppBookingManifestRoute: AppBookingManifestRoute,
+  AppBookingNewRoute: AppBookingNewRoute,
   AppFacilitiesFacilityIdRoute: AppFacilitiesFacilityIdRoute,
   AppFacilitiesIndexRoute: AppFacilitiesIndexRoute,
 }

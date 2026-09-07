@@ -9,6 +9,7 @@ import {
 import {
   BarChart3,
   CalendarDays,
+  CalendarPlus,
   ClipboardList,
   Gauge,
   LayoutDashboard,
@@ -136,106 +137,112 @@ function AppLayout() {
           hasCustomerRecord={hasCustomerRecord}
           onSignOut={signOut}
           sidebar={(collapsed) => (
-          <div className="space-y-6">
-            <NavGroup label="Overview" collapsed={collapsed}>
-              <NavItem
-                to="/app"
-                label="Dashboard"
-                icon={LayoutDashboard}
-                collapsed={collapsed}
-              />
-            </NavGroup>
-            {operations && (
-              <NavGroup label="Booking" collapsed={collapsed}>
+            <div className="space-y-6">
+              <NavGroup label="Overview" collapsed={collapsed}>
                 <NavItem
-                  to="/app/booking/manifest"
-                  label="Daily Manifest"
-                  icon={ClipboardList}
-                  collapsed={collapsed}
-                />
-                {/* Booth keeps its own full-screen layout outside AppShell;
-                    only its position in the sidebar moved. */}
-                <NavItem
-                  to="/attendant"
-                  label="Booth"
-                  icon={SquareParking}
+                  to="/app"
+                  label="Dashboard"
+                  icon={LayoutDashboard}
                   collapsed={collapsed}
                 />
               </NavGroup>
-            )}
-            {operations && (
-              <NavGroup label="Operations" collapsed={collapsed}>
-                <NavItem
-                  to="/app/occupancy"
-                  label="Occupancy"
-                  icon={Gauge}
-                  collapsed={collapsed}
-                />
-                <NavItem
-                  to="/app/availability"
-                  label="Availability"
-                  icon={ParkingSquare}
-                  collapsed={collapsed}
-                />
-                <NavItem
-                  to="/app/reservations"
-                  label="Reservations"
-                  icon={CalendarDays}
-                  collapsed={collapsed}
-                />
-              </NavGroup>
-            )}
-            {management && (
-              <NavGroup label="Management" collapsed={collapsed}>
-                <NavItem
-                  to="/app/facilities"
-                  label="Facilities"
-                  icon={Warehouse}
-                  collapsed={collapsed}
-                />
-                <NavItem
-                  to="/app/permits"
-                  label="Permits"
-                  icon={TicketCheck}
-                  collapsed={collapsed}
-                />
-                <NavItem
-                  to="/app/override"
-                  label="Override"
-                  icon={SlidersHorizontal}
-                  collapsed={collapsed}
-                />
-                {role === 'admin' && (
+              {operations && (
+                <NavGroup label="Booking" collapsed={collapsed}>
                   <NavItem
-                    to="/app/staff"
-                    label="Staff"
-                    icon={UserCog}
+                    to="/app/booking/manifest"
+                    label="Daily Manifest"
+                    icon={ClipboardList}
                     collapsed={collapsed}
                   />
-                )}
-              </NavGroup>
-            )}
-            {management && (
-              <NavGroup label="Insights" collapsed={collapsed}>
-                <NavItem
-                  to="/app/reports"
-                  label="Reports"
-                  icon={BarChart3}
-                  collapsed={collapsed}
-                />
-              </NavGroup>
-            )}
-            {!facilitiesLoading && facilities.length === 0 && (
-              <NavGroup label="Setup" collapsed={collapsed}>
-                <NavItem
-                  to="/app/onboarding"
-                  label="Onboarding"
-                  icon={Sparkles}
-                  collapsed={collapsed}
-                />
-              </NavGroup>
-            )}
-          </div>
+                  <NavItem
+                    to="/app/booking/new"
+                    label="New Booking"
+                    icon={CalendarPlus}
+                    collapsed={collapsed}
+                  />
+                  {/* Booth keeps its own full-screen layout outside AppShell;
+                    only its position in the sidebar moved. */}
+                  <NavItem
+                    to="/attendant"
+                    label="Booth"
+                    icon={SquareParking}
+                    collapsed={collapsed}
+                  />
+                </NavGroup>
+              )}
+              {operations && (
+                <NavGroup label="Operations" collapsed={collapsed}>
+                  <NavItem
+                    to="/app/occupancy"
+                    label="Occupancy"
+                    icon={Gauge}
+                    collapsed={collapsed}
+                  />
+                  <NavItem
+                    to="/app/availability"
+                    label="Availability"
+                    icon={ParkingSquare}
+                    collapsed={collapsed}
+                  />
+                  <NavItem
+                    to="/app/reservations"
+                    label="Reservations"
+                    icon={CalendarDays}
+                    collapsed={collapsed}
+                  />
+                </NavGroup>
+              )}
+              {management && (
+                <NavGroup label="Management" collapsed={collapsed}>
+                  <NavItem
+                    to="/app/facilities"
+                    label="Facilities"
+                    icon={Warehouse}
+                    collapsed={collapsed}
+                  />
+                  <NavItem
+                    to="/app/permits"
+                    label="Permits"
+                    icon={TicketCheck}
+                    collapsed={collapsed}
+                  />
+                  <NavItem
+                    to="/app/override"
+                    label="Override"
+                    icon={SlidersHorizontal}
+                    collapsed={collapsed}
+                  />
+                  {role === 'admin' && (
+                    <NavItem
+                      to="/app/staff"
+                      label="Staff"
+                      icon={UserCog}
+                      collapsed={collapsed}
+                    />
+                  )}
+                </NavGroup>
+              )}
+              {management && (
+                <NavGroup label="Insights" collapsed={collapsed}>
+                  <NavItem
+                    to="/app/reports"
+                    label="Reports"
+                    icon={BarChart3}
+                    collapsed={collapsed}
+                  />
+                </NavGroup>
+              )}
+              {!facilitiesLoading && facilities.length === 0 && (
+                <NavGroup label="Setup" collapsed={collapsed}>
+                  <NavItem
+                    to="/app/onboarding"
+                    label="Onboarding"
+                    icon={Sparkles}
+                    collapsed={collapsed}
+                  />
+                </NavGroup>
+              )}
+            </div>
           )}
         >
           <Outlet />
@@ -271,6 +278,7 @@ function NavGroup({
 type AppPath =
   | '/app'
   | '/app/booking/manifest'
+  | '/app/booking/new'
   | '/app/onboarding'
   | '/app/staff'
   | '/app/facilities'

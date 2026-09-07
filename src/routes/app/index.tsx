@@ -362,7 +362,7 @@ function DashboardView() {
         actions={
           <>
             <Button variant="outline" className="h-9 px-3" asChild>
-              <Link to="/app/reservations">
+              <Link to="/app/booking/new">
                 <Plus className="size-4" />
                 New reservation
               </Link>
