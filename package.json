@@ -28,6 +28,7 @@
     "verify:permit-cancellation": "node scripts/run-sql-verifiers.mjs --file supabase/dev-only/DEV_ONLY_verify_permit_cancellation.sql",
     "verify:permit-issuance": "node scripts/run-sql-verifiers.mjs --file supabase/dev-only/DEV_ONLY_verify_permit_issuance.sql",
     "verify:rls": "node scripts/run-sql-verifiers.mjs --file supabase/dev-only/DEV_ONLY_verify_rls_isolation.sql",
+    "verify:privileged": "node scripts/run-sql-verifiers.mjs --file supabase/dev-only/DEV_ONLY_verify_privileged_functions.sql",
     "verify:reservation-corrections": "node scripts/run-sql-verifiers.mjs --file supabase/dev-only/20260907010000_verify_reservation_corrections.sql",
     "verify:facility-time": "node scripts/run-sql-verifiers.mjs --file supabase/dev-only/20260907020000_verify_facility_time.sql",
     "check:sql": "node scripts/check-sql-special-forms.mjs",

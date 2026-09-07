@@ -10,6 +10,7 @@ const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const tiers = {
   database: [
     'supabase/dev-only/verify_no_anon_execute.sql',
+    'supabase/dev-only/DEV_ONLY_verify_privileged_functions.sql',
     'supabase/dev-only/DEV_ONLY_verify_rls_isolation.sql',
     'supabase/dev-only/DEV_ONLY_verify_permit_issuance.sql',
     'supabase/dev-only/DEV_ONLY_verify_permit_cancellation.sql',
