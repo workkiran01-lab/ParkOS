@@ -94,7 +94,11 @@ function AppLayout() {
     const rows = (facilityResult.data ?? []) as (FacilityOption & {
       archived_at: string | null
     })[]
-    const options = rows.map(({ id, name }) => ({ id, name }))
+    const options = rows.map(({ id, name, timezone }) => ({
+      id,
+      name,
+      timezone,
+    }))
     const activeOptions = rows
       .filter((facility) => facility.archived_at === null)
       .map(({ id, name, timezone }) => ({ id, name, timezone }))

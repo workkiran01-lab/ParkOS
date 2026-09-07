@@ -35,10 +35,7 @@ import { useRole } from '@/hooks/useRole'
 import { friendlyError } from '@/lib/errors'
 import { dollars } from '@/lib/format'
 import { formatRange, parseTstzrange } from '@/lib/holds'
-import {
-  paymentsByReservation,
-  type PaymentSummary,
-} from '@/lib/payments'
+import { paymentsByReservation, type PaymentSummary } from '@/lib/payments'
 import { supabase } from '@/lib/supabase'
 import { Field } from '@/routes/login'
 
@@ -54,6 +51,10 @@ type Row = {
   space_number: string
   customer_name: string
   facility_name: string
+  facility_timezone: string
+  customer_email: string | null
+  customer_phone: string | null
+  license_plate: string | null
   payment: PaymentSummary | null
 }
 
@@ -87,7 +88,7 @@ function StaffReservations() {
     const resResult = await supabase
       .from('reservations')
       .select(
-        'id, booking_code, facility_id, space_id, customer_id, during, status, total_cents, currency',
+        'id, booking_code, facility_id, space_id, customer_id, vehicle_id, during, status, total_cents, currency',
       )
       .eq('org_id', orgId)
       .order('created_at', { ascending: false })
@@ -106,17 +107,34 @@ function StaffReservations() {
 
     const reservations = resResult.data ?? []
     const facilityName = new Map(facilities.map((f) => [f.id, f.name]))
+    const facilityTimezone = new Map(facilities.map((f) => [f.id, f.timezone]))
 
     const spaceIds = [...new Set(reservations.map((r) => r.space_id))]
     const customerIds = [...new Set(reservations.map((r) => r.customer_id))]
+    const vehicleIds = [
+      ...new Set(
+        reservations
+          .map((reservation) => reservation.vehicle_id)
+          .filter((id): id is string => id !== null),
+      ),
+    ]
     const reservationIds = reservations.map((reservation) => reservation.id)
 
-    const [spaceRes, custRes, paymentRes] = await Promise.all([
+    const [spaceRes, custRes, vehicleRes, paymentRes] = await Promise.all([
       spaceIds.length
         ? supabase.from('spaces').select('id, space_number').in('id', spaceIds)
         : Promise.resolve({ data: [], error: null }),
       customerIds.length
-        ? supabase.from('customers').select('id, full_name').in('id', customerIds)
+        ? supabase
+            .from('customers')
+            .select('id, full_name, email, phone')
+            .in('id', customerIds)
+        : Promise.resolve({ data: [], error: null }),
+      vehicleIds.length
+        ? supabase
+            .from('vehicles')
+            .select('id, license_plate')
+            .in('id', vehicleIds)
         : Promise.resolve({ data: [], error: null }),
       reservationIds.length
         ? supabase
@@ -130,10 +148,18 @@ function StaffReservations() {
         : Promise.resolve({ data: [], error: null }),
     ])
 
-    if (spaceRes.error || custRes.error || paymentRes.error) {
+    if (
+      spaceRes.error ||
+      custRes.error ||
+      vehicleRes.error ||
+      paymentRes.error
+    ) {
       setError(
         friendlyError(
-          spaceRes.error ?? custRes.error ?? paymentRes.error,
+          spaceRes.error ??
+            custRes.error ??
+            vehicleRes.error ??
+            paymentRes.error,
           'Reservation details could not be loaded. Please try again.',
         ),
       )
@@ -141,8 +167,18 @@ function StaffReservations() {
       return
     }
 
-    const spaceNumber = new Map((spaceRes.data ?? []).map((s) => [s.id, s.space_number]))
-    const customerName = new Map((custRes.data ?? []).map((c) => [c.id, c.full_name]))
+    const spaceNumber = new Map(
+      (spaceRes.data ?? []).map((space) => [space.id, space.space_number]),
+    )
+    const customerDetails = new Map(
+      (custRes.data ?? []).map((customer) => [customer.id, customer]),
+    )
+    const vehiclePlate = new Map(
+      (vehicleRes.data ?? []).map((vehicle) => [
+        vehicle.id,
+        vehicle.license_plate,
+      ]),
+    )
     const paymentByReservation = paymentsByReservation(
       (paymentRes.data ?? []) as PaymentSummary[],
     )
@@ -158,8 +194,15 @@ function StaffReservations() {
         total_cents: r.total_cents,
         currency: r.currency,
         space_number: spaceNumber.get(r.space_id) ?? '—',
-        customer_name: customerName.get(r.customer_id) ?? 'Unknown',
+        customer_name:
+          customerDetails.get(r.customer_id)?.full_name ?? 'Unknown',
+        customer_email: customerDetails.get(r.customer_id)?.email ?? null,
+        customer_phone: customerDetails.get(r.customer_id)?.phone ?? null,
+        license_plate: r.vehicle_id
+          ? (vehiclePlate.get(r.vehicle_id) ?? null)
+          : null,
         facility_name: facilityName.get(r.facility_id) ?? 'Facility',
+        facility_timezone: facilityTimezone.get(r.facility_id) ?? '',
         payment: paymentByReservation.get(r.id) ?? null,
       })),
     )
@@ -279,7 +322,8 @@ function StaffReservations() {
                         <TableCell>
                           <Badge
                             variant={
-                              row.status === 'cancelled' || row.status === 'no_show'
+                              row.status === 'cancelled' ||
+                              row.status === 'no_show'
                                 ? 'outline'
                                 : 'default'
                             }
@@ -288,7 +332,9 @@ function StaffReservations() {
                           </Badge>
                         </TableCell>
                         <TableCell>
-                          <PaymentStatusBadge status={row.payment?.status ?? null} />
+                          <PaymentStatusBadge
+                            status={row.payment?.status ?? null}
+                          />
                         </TableCell>
                         <TableCell className="text-right">
                           {dollars(row.total_cents)} {row.currency}
@@ -304,8 +350,17 @@ function StaffReservations() {
                                 endIso={end.toISOString()}
                                 isStaff
                                 allowExtend={
-                                  !row.payment || row.payment.status === 'failed'
+                                  !row.payment ||
+                                  row.payment.status === 'failed'
                                 }
+                                correction={{
+                                  facilityId: row.facility_id,
+                                  facilityTimezone: row.facility_timezone,
+                                  customerName: row.customer_name,
+                                  customerEmail: row.customer_email,
+                                  customerPhone: row.customer_phone,
+                                  licensePlate: row.license_plate,
+                                }}
                                 onDone={load}
                               />
                             )}
@@ -314,9 +369,13 @@ function StaffReservations() {
                               row.payment?.status === 'refunded') && (
                               <DownloadReceiptButton reservationId={row.id} />
                             )}
-                            {(role === 'admin' || role === 'manager') && row.payment && (
-                              <RefundPaymentButton payment={row.payment} onDone={load} />
-                            )}
+                            {(role === 'admin' || role === 'manager') &&
+                              row.payment && (
+                                <RefundPaymentButton
+                                  payment={row.payment}
+                                  onDone={load}
+                                />
+                              )}
                           </div>
                         </TableCell>
                       </TableRow>

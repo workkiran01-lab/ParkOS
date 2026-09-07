@@ -1,8 +1,8 @@
 /* eslint-disable react-refresh/only-export-components */
 import { createContext, useContext, type ReactNode } from 'react'
 
-export type FacilitySummary = { id: string; name: string }
-export type FacilityOption = FacilitySummary & { timezone: string }
+export type FacilitySummary = { id: string; name: string; timezone: string }
+export type FacilityOption = FacilitySummary
 
 type FacilityContextValue = {
   facilities: FacilityOption[]

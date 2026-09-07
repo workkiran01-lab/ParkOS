@@ -3,6 +3,10 @@ import { toast } from 'sonner'
 import type { QuoteBreakdown } from '@/components/facility/PricingSection'
 import { Button } from '@/components/ui/button'
 import {
+  ReservationCorrectionDialog,
+  type CorrectionDetails,
+} from '@/components/reservations/ReservationCorrectionDialog'
+import {
   Dialog,
   DialogContent,
   DialogDescription,
@@ -27,6 +31,7 @@ type Props = {
   isStaff: boolean
   /** Once Checkout starts, changing the priced window would invalidate it. */
   allowExtend?: boolean
+  correction?: CorrectionDetails
   onDone: () => void | Promise<void>
 }
 
@@ -40,6 +45,7 @@ export function ReservationActions({
   endIso,
   isStaff,
   allowExtend = true,
+  correction,
   onDone,
 }: Props) {
   const [cancelOpen, setCancelOpen] = useState(false)
@@ -158,6 +164,16 @@ export function ReservationActions({
 
   return (
     <div className="flex flex-wrap gap-2">
+      {isStaff && correction && (
+        <ReservationCorrectionDialog
+          reservationId={reservationId}
+          currentSpaceId={spaceId}
+          startIso={startIso}
+          endIso={endIso}
+          details={correction}
+          onDone={onDone}
+        />
+      )}
       {isStaff && status === 'pending' && (
         <Button size="sm" variant="outline" disabled={busy} onClick={confirm}>
           {busy ? 'Confirming…' : 'Confirm'}
