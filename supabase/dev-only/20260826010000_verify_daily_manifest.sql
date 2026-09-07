@@ -34,13 +34,13 @@ select fixture.id,
   from (values
     ('ed000000-0000-0000-0000-0000000000d1'::uuid,
      'L1-013', tstzrange('2026-08-23 15:00:00+00', '2026-08-23 17:00:00+00', '[)'),
-     'PKS-MANF01', 1000),
+     'PKS-MANFA2', 1000),
     ('ed000000-0000-0000-0000-0000000000d2'::uuid,
      'L1-014', tstzrange('2026-08-24 05:00:00+00', '2026-08-24 08:00:00+00', '[)'),
-     'PKS-MANF02', 1200),
+     'PKS-MANFA3', 1200),
     ('ed000000-0000-0000-0000-0000000000d3'::uuid,
      'L1-015', tstzrange('2026-08-23 18:00:00+00', '2026-08-23 19:00:00+00', '[)'),
-     'PKS-MANF03', 800)
+     'PKS-MANFA4', 800)
   ) as fixture(id, space_number, during, booking_code, total_cents)
   join public.spaces s on s.space_number = fixture.space_number
   join public.zones z on z.id = s.zone_id
