@@ -44,7 +44,8 @@ with coverage(proname, exposure, scope, verifier) as (
     ('record_permit_refund', 'service', 'tenant', '20260906000000_verify_refund_ledgers.sql'),
     ('refund_booth_payment', 'caller', 'tenant', '20260906000000_verify_refund_ledgers.sql'),
     ('request_permit_cancellation', 'caller', 'tenant', 'DEV_ONLY_verify_permit_cancellation.sql'),
-    ('reservation_balance_cents', 'caller', 'tenant', '20260825010000_verify_booth_payments.sql')
+    ('reservation_balance_cents', 'caller', 'tenant', '20260825010000_verify_booth_payments.sql'),
+    ('reservation_correction_scope', 'caller', 'tenant', '20260907010000_verify_reservation_corrections.sql')
 ),
 catalog as (
   select p.oid,
@@ -117,7 +118,8 @@ begin
       ('public_ensure_customer'), ('public_quote_reservation'),
       ('record_booth_payment'), ('record_permit_payment'),
       ('record_permit_refund'), ('refund_booth_payment'),
-      ('request_permit_cancellation'), ('reservation_balance_cents')
+      ('request_permit_cancellation'), ('reservation_balance_cents'),
+      ('reservation_correction_scope')
     ) as coverage(proname)
    where not exists (
      select 1 from verifier_privileged_catalog catalog

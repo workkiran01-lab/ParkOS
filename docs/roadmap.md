@@ -184,6 +184,20 @@ first — this file tracks work, not architecture.
   `public_create_reservation` → `check_in_walk_in` for the return-type change (same pattern
   already handled once for booking_code generation itself). Not done now — deliberately kept out
   of a UI/design-pass task.
+- **A correction retroactively rewrites past daily manifests, though not issued receipts.**
+  `correct_reservation` updates the shared `customers`/`vehicles` rows by design, and since
+  `20260907030000` every reservation it also changes carries its own
+  `correct_reservation_side_effect` audit row keyed on that reservation. What remains unaddressed
+  is the read side: `facility_daily_manifest` joins contact details live
+  (`join public.customers c on c.id = r.customer_id`, `20260826010000_daily_manifest.sql:105`), so
+  a manifest reprinted for a past date shows today's corrected name rather than the name the
+  attendant actually saw that day. **Issued receipts are not affected**: `issueReceipt` renders the
+  PDF once and uploads it, and `receipt-download` serves that stored artifact through
+  `createSignedUrl(storage_path)` without re-rendering, so an already-issued receipt keeps the name
+  it was issued with. Fixing the manifest means either a per-reservation contact snapshot
+  (deliberately rejected — it is a multi-migration change across receipts, reporting, and
+  `get_my_reservations`) or a manifest that reconstructs historical names from the audit trail.
+  Out of scope for the audit-visibility fix that created this note.
 
 ## Implemented in code; deployment remains explicit
 

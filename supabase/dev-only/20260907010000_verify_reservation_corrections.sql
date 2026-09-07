@@ -30,6 +30,9 @@ declare
   v_new_start timestamptz := timestamp '2028-02-15 11:00' at time zone 'America/Los_Angeles';
   v_new_end timestamptz := timestamp '2028-02-15 14:00' at time zone 'America/Los_Angeles';
   v_count integer;
+  v_affected jsonb;
+  v_preview jsonb;
+  v_preview_count integer;
 begin
   begin
     insert into auth.users (
@@ -110,11 +113,17 @@ begin
     );
     perform set_config('request.jwt.claim.sub', v_attendant_a::text, true);
     execute 'set local role authenticated';
-    perform public.correct_reservation(
-      v_reservation, v_space_2, v_new_start, v_new_end,
-      'Corrected Customer', 'after@example.com', '+1 (562) 555-0199',
-      'NEW-456', 'front desk corrected intake details'
-    );
+    -- What staff are shown BEFORE confirming, captured before anything moves.
+    select scope.affected_count, scope.affected_reservations
+      into v_preview_count, v_preview
+      from public.reservation_correction_scope(v_reservation) scope;
+
+    select corrected.affected_reservations into v_affected
+      from public.correct_reservation(
+        v_reservation, v_space_2, v_new_start, v_new_end,
+        'Corrected Customer', 'after@example.com', '+1 (562) 555-0199',
+        'NEW-456', 'front desk corrected intake details'
+      ) corrected;
 
     execute format('set local role %I', v_original_role);
     select count(*) into v_count
@@ -146,6 +155,58 @@ begin
        and a.reason::jsonb -> 'after' ->> 'space_id' = v_space_2::text;
     if v_count <> 1 then
       raise exception 'CORRECTION FAIL: before/after audit record missing';
+    end if;
+
+    -- Customer and vehicle rows are shared per org, so this correction is
+    -- global BY DESIGN. v_blocking_reservation shares both with v_reservation
+    -- and must now show the corrected values. Asserting the sibling explicitly
+    -- is what stops the global write being silently unverified: without this,
+    -- the defect satisfies the single-reservation assertion above.
+    select count(*) into v_count
+      from public.reservations r
+      join public.customers c on c.id = r.customer_id
+      join public.vehicles v on v.id = r.vehicle_id
+     where r.id = v_blocking_reservation
+       and c.full_name = 'Corrected Customer'
+       and c.email = 'after@example.com'
+       and c.phone = '+1 (562) 555-0199'
+       and v.license_plate = 'NEW-456';
+    if v_count <> 1 then
+      raise exception 'CORRECTION FAIL: shared-record correction did not reach the sibling reservation';
+    end if;
+
+    -- ...and the change must be discoverable FROM the sibling itself, keyed on
+    -- its own id, not only from the reservation the operator corrected.
+    select count(*) into v_count from public.audit_log a
+     where a.target_id = v_blocking_reservation
+       and a.target_table = 'reservations'
+       and a.action = 'correct_reservation_side_effect'
+       and a.actor_id = v_attendant_a
+       and (a.reason::jsonb ->> 'origin_reservation_id') = v_reservation::text
+       and (a.reason::jsonb ->> 'shared_record') = 'customer+vehicle'
+       and a.reason::jsonb -> 'before' -> 'customer' ->> 'full_name'
+             = '__CORRECTION_CUSTOMER__'
+       and a.reason::jsonb -> 'before' -> 'vehicle' ->> 'license_plate' = 'OLD123'
+       and a.reason::jsonb -> 'after' -> 'customer' ->> 'full_name'
+             = 'Corrected Customer'
+       and a.reason::jsonb -> 'after' -> 'vehicle' ->> 'license_plate' = 'NEW-456';
+    if v_count <> 1 then
+      raise exception 'CORRECTION FAIL: sibling reservation has no side-effect audit row';
+    end if;
+
+    -- The RPC must hand the caller the same set, so the UI can name it.
+    if v_affected is null
+       or pg_catalog.jsonb_array_length(v_affected) <> 1
+       or (v_affected -> 0 ->> 'reservation_id') <> v_blocking_reservation::text
+       or (v_affected -> 0 ->> 'shared') <> 'customer+vehicle' then
+      raise exception 'CORRECTION FAIL: correct_reservation did not return the affected reservation';
+    end if;
+
+    -- The preview staff confirm against must match what actually happened.
+    if v_preview_count <> 1
+       or v_preview is null
+       or (v_preview -> 0 ->> 'reservation_id') <> v_blocking_reservation::text then
+      raise exception 'CORRECTION FAIL: correction scope preview did not match the affected set';
     end if;
 
     -- No reservation UPDATE policy exists. Even an org admin cannot directly

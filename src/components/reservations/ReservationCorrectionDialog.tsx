@@ -38,6 +38,13 @@ type SpaceOption = {
   zone_id: string
 }
 
+/** Another reservation that shares this one's customer or vehicle record. */
+type AffectedReservation = {
+  reservation_id: string
+  booking_code: string
+  shared: 'customer' | 'vehicle' | 'customer+vehicle'
+}
+
 export type CorrectionDetails = {
   facilityId: string
   facilityTimezone: string
@@ -82,6 +89,11 @@ export function ReservationCorrectionDialog({
   const [loading, setLoading] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // Customer and vehicle records are shared per org, so editing contact details
+  // here also rewrites them for these reservations. Staff see this before
+  // confirming, never as an after-the-fact notification.
+  const [affected, setAffected] = useState<AffectedReservation[]>([])
+  const [scopeUnknown, setScopeUnknown] = useState(false)
 
   async function show() {
     setOpen(true)
@@ -93,6 +105,23 @@ export function ReservationCorrectionDialog({
     setCustomerPhone(details.customerPhone ?? '')
     setLicensePlate(details.licensePlate ?? '')
     setReason('')
+    setAffected([])
+    setScopeUnknown(false)
+
+    const scopeResult = await supabase.rpc('reservation_correction_scope', {
+      p_reservation_id: reservationId,
+    })
+    if (scopeResult.error) {
+      // Never claim "only this reservation" when we could not check.
+      setScopeUnknown(true)
+    } else {
+      const scope = (
+        scopeResult.data as
+          { affected_reservations: AffectedReservation[] | null }[] | null
+      )?.[0]
+      setAffected(scope?.affected_reservations ?? [])
+    }
+
     try {
       setStart(instantToFacilityInput(startIso, details.facilityTimezone))
       setEnd(instantToFacilityInput(endIso, details.facilityTimezone))
@@ -208,8 +237,15 @@ export function ReservationCorrectionDialog({
       return
     }
     const result = (
-      data as { booking_code: string; total_cents: number }[] | null
+      data as
+        | {
+            booking_code: string
+            total_cents: number
+            affected_reservations: AffectedReservation[] | null
+          }[]
+        | null
     )?.[0]
+    const alsoChanged = result?.affected_reservations?.length ?? 0
     if (!result?.booking_code) {
       setError(
         'The correction completed, but its booking code was not returned.',
@@ -218,7 +254,12 @@ export function ReservationCorrectionDialog({
     }
     setOpen(false)
     toast.success(
-      `${result.booking_code} corrected — ${dollars(result.total_cents)} total`,
+      `${result.booking_code} corrected — ${dollars(result.total_cents)} total` +
+        (alsoChanged > 0
+          ? ` · shared contact details also updated on ${alsoChanged} other ${
+              alsoChanged === 1 ? 'reservation' : 'reservations'
+            }`
+          : ''),
     )
     await onDone()
   }
@@ -276,6 +317,31 @@ export function ReservationCorrectionDialog({
                   </SelectContent>
                 </Select>
               </Field>
+              {scopeUnknown ? (
+                <p className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-900 dark:text-amber-200">
+                  Could not check which other reservations share this
+                  customer&rsquo;s record. Contact and plate edits are shared,
+                  so other reservations may also change.
+                </p>
+              ) : affected.length > 0 ? (
+                <div className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-900 dark:text-amber-200">
+                  <p className="font-medium">
+                    Contact and plate changes also apply to {affected.length}{' '}
+                    other{' '}
+                    {affected.length === 1 ? 'reservation' : 'reservations'}.
+                  </p>
+                  <p className="mt-1">
+                    This customer&rsquo;s record is shared across their
+                    bookings. Saving a name, email, phone, or plate here also
+                    changes{' '}
+                    <span className="font-medium tabular-nums">
+                      {affected.map((row) => row.booking_code).join(', ')}
+                    </span>
+                    . The time, space, and price change only on this
+                    reservation.
+                  </p>
+                </div>
+              ) : null}
               <div className="grid gap-3 sm:grid-cols-2">
                 <Field label="Customer name">
                   <Input
