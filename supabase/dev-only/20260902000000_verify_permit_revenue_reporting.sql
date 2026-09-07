@@ -1,9 +1,8 @@
 -- DEV-ONLY verification for permit revenue in the reporting functions.
 --
--- permit_payments is EMPTY on parkos-dev and record_permit_payment has never run
--- there, so there is no real permit money to check against. Ground truth is built
--- here instead: fixed rows with hand-computed totals, asserted against each of the
--- four functions SEPARATELY. Nothing is inferred from one function to another, and
+-- Ground truth is built from fixed rows with hand-computed totals, asserted
+-- against each of the four functions SEPARATELY. Nothing is inferred from one
+-- function to another, and
 -- no expected figure is read back out of the function it is checking.
 -- Everything rolls back.
 --
@@ -43,7 +42,7 @@
 --   this migration the whole facility returned no rows at all.
 --
 -- Run after 20260902000000_permit_revenue_reporting.sql is applied:
---   npx supabase db query --linked --file supabase/dev-only/20260902000000_verify_permit_revenue_reporting.sql
+--   npm run verify:permit-revenue
 
 begin;
 
@@ -164,6 +163,7 @@ select set_config('request.jwt.claims',
 -- as a literal. Nothing is derived from the function under test.
 -- ---------------------------------------------------------------------------
 
+create temporary table verifier_permit_revenue_results on commit drop as
 select 0 as seq,
        'CHECK0 July 2026 is otherwise empty, so the null-facility totals below are only fixtures'
          as check,
@@ -302,5 +302,40 @@ select 16, 'AGREEMENT all-facility July total = Lot R + Lot C = 53650 + 9000',
        (select revenue_cents::text from public.report_revenue_by_period(
           '2026-07-01', '2026-07-31', null, 'month'))
  order by seq;
+
+reset role;
+
+do $$
+declare
+  v_count integer;
+  v_missing integer;
+  v_failures text;
+begin
+  select count(*),
+         count(*) filter (where actual is distinct from expected),
+         string_agg(seq::text || ' ' || check || ': expected ' || expected
+                    || ', got ' || coalesce(actual, '(null)'), '; ' order by seq)
+           filter (where actual is distinct from expected)
+    into v_count, v_missing, v_failures
+    from verifier_permit_revenue_results;
+
+  if v_count <> 17
+     or exists (
+       select 1
+         from generate_series(0, 16) expected_seq(seq)
+        where not exists (
+          select 1 from verifier_permit_revenue_results result
+           where result.seq = expected_seq.seq
+        )
+     ) then
+    raise exception 'Permit revenue verifier emitted % checks; expected sequences 0 through 16',
+      v_count;
+  end if;
+  if v_missing <> 0 then
+    raise exception 'Permit revenue verifier failed: %', v_failures;
+  end if;
+end $$;
+
+select * from verifier_permit_revenue_results order by seq;
 
 rollback;

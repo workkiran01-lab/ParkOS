@@ -1,5 +1,5 @@
--- DEV-ONLY manual seed for parkos-dev. Run with the Supabase CLI's file-query
--- command; this file deliberately lives outside migrations and must never be pushed.
+-- DEV-ONLY manual seed for a disposable local database. Run only through the
+-- loopback-guarded npm command. This file deliberately lives outside migrations.
 -- Creates two isolated fake orgs so cross-org RLS
 -- isolation can be PROVEN (see supabase/tests/rls_isolation_checks.sql), not assumed.
 -- Do NOT apply this migration to a production project: it inserts fake auth.users.

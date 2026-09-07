@@ -2,7 +2,7 @@
 -- invoice.payment_succeeded books out-of-band money exactly once and never
 -- double-books a normal payment.
 --
---   npx supabase db query --linked --file supabase/dev-only/20260903000000_verify_invoice_paid.sql
+--   npm run verify:invoice-paid
 --
 -- Assertion-only: every check RAISES on failure, so a failure aborts the run
 -- with its message. Everything runs inside one transaction ending in ROLLBACK,

@@ -14,7 +14,7 @@
 -- it blocks, T2/T3/T7 prove it does not block real state changes.
 --
 -- Run after 20260901000000_permit_event_ordering_guard.sql is applied:
---   npx supabase db query --linked --file supabase/dev-only/20260901000000_verify_permit_event_ordering_guard.sql
+--   npm run verify:permit-event-ordering
 
 begin;
 
@@ -305,6 +305,7 @@ end $$;
 -- cron.job_run_details are ordinary tables and read the same either side of it.
 -- ---------------------------------------------------------------------------
 
+create temporary table verifier_permit_event_ordering_results on commit drop as
 select 1 as seq,
        'T1 stale created(incomplete) after active -> must NOT demote' as test,
        p.status || ' | period_end=' || p.current_period_end::text as observed,
@@ -359,15 +360,19 @@ select 9, 'T8 report detects both suspended fixtures, mutates nothing',
                        'ce000000-0000-0000-0000-0000000000b7')
    and r.classification = 'suspended_unverified'
 union all
--- pg_cron evidence. cron.job proves the job is registered and active;
--- cron.job_run_details proves it actually executes. A migration NOTICE proves
--- neither, which is exactly why 20260819130000's pattern was not reused.
+-- pg_cron evidence. Fresh disposable databases have no run history yet, so the
+-- verifier requires both jobs, their exact schedules, and active registrations.
+-- Any recorded failed run also fails the check.
 select 10, 'pg_cron job: ' || j.jobname,
        j.schedule || ' | active=' || j.active::text
          || ' | runs=' || pg_catalog.count(d.runid)::text
          || ' | failed=' || pg_catalog.count(*) filter (where d.status <> 'succeeded')::text
          || ' | last=' || coalesce(pg_catalog.max(d.start_time)::text, 'never'),
        case when j.active
+             and ((j.jobname = 'parkos-permit-reconciliation'
+                    and j.schedule = '*/15 * * * *')
+               or (j.jobname = 'parkos-no-show-sweep'
+                    and j.schedule = '*/5 * * * *'))
              and pg_catalog.count(*) filter (where d.status <> 'succeeded') = 0
             then 'PASS' else 'FAIL' end
   from cron.job j
@@ -375,5 +380,28 @@ select 10, 'pg_cron job: ' || j.jobname,
  where j.jobname in ('parkos-permit-reconciliation', 'parkos-no-show-sweep')
  group by j.jobname, j.schedule, j.active
  order by seq, test;
+
+do $$
+declare
+  v_count integer;
+  v_failures text;
+begin
+  select count(*),
+         string_agg(test || ': ' || observed, '; ' order by seq, test)
+           filter (where result <> 'PASS')
+    into v_count, v_failures
+    from verifier_permit_event_ordering_results;
+
+  if v_count <> 11 then
+    raise exception
+      'Permit event-ordering verifier emitted % rows; expected 9 behavior checks and 2 cron checks',
+      v_count;
+  end if;
+  if v_failures is not null then
+    raise exception 'Permit event-ordering verifier failed: %', v_failures;
+  end if;
+end $$;
+
+select * from verifier_permit_event_ordering_results order by seq, test;
 
 rollback;

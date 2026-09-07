@@ -2,8 +2,8 @@
 -- Every block RAISES EXCEPTION on failure. All writes happen inside a
 -- subtransaction unwound by a sentinel, so the script is data-neutral.
 --
--- Run only against parkos-dev:
---   npx supabase db query --linked --file supabase/dev-only/DEV_ONLY_verify_permit_issuance.sql
+-- Run only against a seeded disposable local database:
+--   npm run verify:permit-issuance
 --
 -- Depends on the dev seed (DEV_ONLY_seed_dev_orgs.sql) for Org A and its admin.
 --

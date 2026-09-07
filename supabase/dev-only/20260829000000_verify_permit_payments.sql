@@ -3,7 +3,7 @@
 -- with its message. Everything runs inside a single transaction that ends in
 -- ROLLBACK, so no fixture survives.
 --
---   npx supabase db query --linked --file supabase/dev-only/20260829000000_verify_permit_payments.sql
+--   npm run verify:permit-payments
 --
 -- Depends on the dev seed (DEV_ONLY_seed_dev_orgs.sql) for its two orgs and their admin
 -- users; every other row it needs, it creates and then throws away:

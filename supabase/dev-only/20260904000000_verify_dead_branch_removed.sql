@@ -1,7 +1,7 @@
 -- DEV-ONLY verification that dropping the 'invoice.paid' arm from
 -- process_stripe_subscription_event changed nothing any caller can reach.
 --
---   npx supabase db query --linked --file supabase/dev-only/20260904000000_verify_dead_branch_removed.sql
+--   npm run verify:dead-branch
 --
 -- Assertion-only: every check RAISES on failure. One transaction, ends in
 -- ROLLBACK, so no fixture survives.

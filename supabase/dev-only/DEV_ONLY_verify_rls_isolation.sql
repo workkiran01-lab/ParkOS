@@ -1,9 +1,9 @@
 -- DEV-ONLY manual RLS isolation verification (assertion-only; changes no schema or data).
 -- Companion to supabase/tests/rls_isolation_checks.sql (the interactive SQL-editor
--- version). Run this manually against parkos-dev after policy changes. Every block
+-- version). Run this against a disposable local database after policy changes. Every block
 -- RAISES EXCEPTION on failure, so a failed check aborts execution with its message.
 --
--- Depends on the dev seed (DEV_ONLY_seed_dev_orgs.sql); like the seed, dev-project only.
+-- Depends on the dev seed (DEV_ONLY_seed_dev_orgs.sql); local database only.
 -- Every check runs inside one transaction that is unconditionally rolled back;
 -- the final summary runs afterwards so the Management API returns visible proof.
 

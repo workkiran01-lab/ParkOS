@@ -1,6 +1,6 @@
 // Helpers for working with Postgres tstzrange values over the wire.
 // Ranges are stored UTC (ARCHITECTURE.md) and rendered local at the edge.
-import { isValidIanaTimeZone } from '@/lib/facility-time'
+import { isValidIanaTimeZone } from './facility-time.ts'
 
 export type SpaceType =
   'standard' | 'compact' | 'accessible' | 'ev' | 'oversized' | 'motorcycle'

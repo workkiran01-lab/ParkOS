@@ -1,10 +1,10 @@
 -- DEV-ONLY verification for public.facility_daily_manifest(uuid, date).
--- Read-only. Runs inside a transaction that ends in ROLLBACK and creates no
--- fixtures: every check is against REAL parkos-dev data.
+-- Runs inside a transaction that ends in ROLLBACK. It exercises the seeded
+-- disposable database and temporarily archives one fixture row.
 --
---   npx supabase db query --linked --file supabase/dev-only/20260826010000_verify_daily_manifest.sql
+--   npm run verify:daily-manifest
 --
--- Runs as the real SOL org admin (not postgres) for two reasons: the manifest
+-- Runs as the seeded Harbor Park admin (not postgres) for two reasons: the manifest
 -- is SECURITY INVOKER, so postgres would bypass the RLS the function relies on
 -- for tenant scoping; and reservation_balance_cents raises NOT_AUTHORIZED
 -- without a membership, so the parity check could not run at all as postgres.
@@ -14,12 +14,62 @@
 
 begin;
 
--- CHECK 7 needs an archived reservation to test the soft-delete filter, and
--- parkos-dev has none. Archive one real manifest-eligible row here, as postgres
--- and before the role switch, so the filter is actually exercised. The
--- surrounding transaction rolls back, so nothing is really archived. Every
--- other check below simply sees one fewer row, which is consistent: the
--- hand-written `expected` set filters archived_at the same way.
+-- Fixed fixtures exercise all three manifest kinds. The cross-midnight row is
+-- arriving on August 23 and departing on August 24; the first row is a
+-- same-day turnaround. A third row is archived below for the soft-delete probe.
+insert into public.reservations
+  (id, org_id, facility_id, space_id, customer_id, during, status,
+   booking_code, price_breakdown, total_cents)
+select fixture.id,
+       'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'::uuid,
+       '11111111-1111-1111-1111-111111111111'::uuid,
+       s.id,
+       'ca000001-0000-0000-0000-000000000001'::uuid,
+       fixture.during,
+       'confirmed'::public.reservation_status,
+       fixture.booking_code,
+       jsonb_build_object('currency', 'USD', 'line_items', jsonb_build_array(),
+                          'total_cents', fixture.total_cents),
+       fixture.total_cents
+  from (values
+    ('ed000000-0000-0000-0000-0000000000d1'::uuid,
+     'L1-013', tstzrange('2026-08-23 15:00:00+00', '2026-08-23 17:00:00+00', '[)'),
+     'PKS-MANF01', 1000),
+    ('ed000000-0000-0000-0000-0000000000d2'::uuid,
+     'L1-014', tstzrange('2026-08-24 05:00:00+00', '2026-08-24 08:00:00+00', '[)'),
+     'PKS-MANF02', 1200),
+    ('ed000000-0000-0000-0000-0000000000d3'::uuid,
+     'L1-015', tstzrange('2026-08-23 18:00:00+00', '2026-08-23 19:00:00+00', '[)'),
+     'PKS-MANF03', 800)
+  ) as fixture(id, space_number, during, booking_code, total_cents)
+  join public.spaces s on s.space_number = fixture.space_number
+  join public.zones z on z.id = s.zone_id
+   and z.facility_id = '11111111-1111-1111-1111-111111111111';
+
+insert into public.payments
+  (id, org_id, reservation_id, stripe_checkout_session_id,
+   amount_cents, status, created_at)
+values
+  ('ed000000-0000-0000-0000-0000000000a1',
+   'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+   'ed000000-0000-0000-0000-0000000000d1', 'cs_manifest_succeeded',
+   400, 'succeeded', '2026-08-23 15:30:00+00'),
+  ('ed000000-0000-0000-0000-0000000000a2',
+   'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+   'ed000000-0000-0000-0000-0000000000d1', 'cs_manifest_failed',
+   500, 'failed', '2026-08-23 15:35:00+00');
+
+insert into public.booth_payments
+  (id, org_id, reservation_id, amount_cents, method, collected_by, created_at)
+values
+  ('ed000000-0000-0000-0000-0000000000b1',
+   'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+   'ed000000-0000-0000-0000-0000000000d1',
+   300, 'cash', '00000000-0000-0000-0000-0000000000a1',
+   '2026-08-23 15:40:00+00');
+
+-- Archive the dedicated probe as postgres before the role switch. The
+-- surrounding transaction rolls every fixture back.
 create temporary table archived_probe on commit drop as
 select r.id,
        r.facility_id,
@@ -27,10 +77,7 @@ select r.id,
          as local_date
   from public.reservations r
   join public.facilities f on f.id = r.facility_id
- where r.facility_id = '0c49b2a9-9b49-4891-aa5a-e731bd240662'
-   and r.archived_at is null
- order by lower(r.during)
- limit 1;
+ where r.id = 'ed000000-0000-0000-0000-0000000000d3';
 
 update public.reservations
    set archived_at = now()
@@ -42,15 +89,16 @@ grant select on archived_probe to authenticated;
 
 set local role authenticated;
 select set_config('request.jwt.claims',
-  '{"sub":"8f45e315-b9da-4653-9d61-80faa91ce8f1","role":"authenticated"}', true);
+  '{"sub":"00000000-0000-0000-0000-0000000000a1","role":"authenticated"}', true);
 select set_config('request.jwt.claim.sub',
-  '8f45e315-b9da-4653-9d61-80faa91ce8f1', true);
+  '00000000-0000-0000-0000-0000000000a1', true);
 
+create temporary table verifier_daily_manifest_results on commit drop as
 with
 sol_facilities as (
   select f.id, public.safe_timezone(f.timezone) as tz
     from public.facilities f
-   where f.org_id = '7bf2d8e7-3d7f-495c-ac76-c6f8210823bc'
+   where f.org_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
 ),
 -- Every facility-local date that any non-archived reservation touches. This is
 -- the full domain of the manifest, so the checks below are exhaustive over real
@@ -203,9 +251,9 @@ select '5. kind matches hand-computed classification',
 
 union all
 
--- CHECK 6 - coverage: which kinds did the real data actually exercise? A kind
+-- CHECK 6 - coverage: which kinds did the fixed fixtures actually exercise? A kind
 -- with zero rows is UNTESTED, and this says so rather than implying otherwise.
-select '6. kind coverage in real data',
+select '6. kind coverage in fixed fixtures',
        case when count(distinct k.kind) = 3 then 'PASS (all three seen)'
             else 'PARTIAL - some kinds untested' end,
        coalesce(string_agg(k.kind || '=' || k.n::text, ', ' order by k.kind),
@@ -244,18 +292,18 @@ select '7. archived reservation excluded from its own date',
 
 union all
 
--- CHECK 8 - tenant isolation. As the SOL admin, a facility belonging to
+-- CHECK 8 - tenant isolation. As the Harbor Park admin, a facility belonging to
 -- another org must return zero rows via RLS, not an error and not data.
 select '8. cross-tenant facility returns zero rows',
        case when (select count(*)
                     from public.facility_daily_manifest(
-                           '11111111-1111-1111-1111-111111111111'::uuid,
+                           '33333333-3333-3333-3333-333333333333'::uuid,
                            '2026-08-23'::date)) = 0
               then 'PASS' else 'FAIL' end,
-       'Lot A (org A) queried as SOL admin on a date Lot A has rows on; got '
+       'Pier Point Lot (org B) queried as Harbor Park admin; got '
        || (select count(*)
              from public.facility_daily_manifest(
-                    '11111111-1111-1111-1111-111111111111'::uuid,
+                    '33333333-3333-3333-3333-333333333333'::uuid,
                     '2026-08-23'::date))::text || ' rows'
 
 union all
@@ -264,15 +312,38 @@ union all
 select '9. default p_date == explicit facility-local today',
        case when (select count(*) from (
                    select * from public.facility_daily_manifest(
-                     '0c49b2a9-9b49-4891-aa5a-e731bd240662'::uuid)
+                     '11111111-1111-1111-1111-111111111111'::uuid)
                    except all
                    select * from public.facility_daily_manifest(
-                     '0c49b2a9-9b49-4891-aa5a-e731bd240662'::uuid,
+                     '11111111-1111-1111-1111-111111111111'::uuid,
                      (now() at time zone (select tz from sol_facilities
-                                           where id = '0c49b2a9-9b49-4891-aa5a-e731bd240662'))::date)
+                                           where id = '11111111-1111-1111-1111-111111111111'))::date)
                  ) z) = 0 then 'PASS' else 'FAIL' end,
-       'sol city, default vs explicit local today'
+       'Lot A, default vs explicit local today'
 
 order by 1;
+
+reset role;
+
+do $$
+declare
+  v_count integer;
+  v_failures text;
+begin
+  select count(*),
+         string_agg(check_name || ': ' || status, '; ' order by check_name)
+           filter (where status not like 'PASS%')
+    into v_count, v_failures
+    from verifier_daily_manifest_results;
+
+  if v_count <> 9 then
+    raise exception 'Daily manifest verifier emitted % checks; expected 9', v_count;
+  end if;
+  if v_failures is not null then
+    raise exception 'Daily manifest verifier failed: %', v_failures;
+  end if;
+end $$;
+
+select * from verifier_daily_manifest_results order by check_name;
 
 rollback;

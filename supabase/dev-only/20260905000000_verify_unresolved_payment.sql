@@ -2,7 +2,7 @@
 -- acknowledged instead of crashing the webhook, and that the charges it CAN
 -- resolve are recorded exactly as before.
 --
---   npx supabase db query --linked --file supabase/dev-only/20260905000000_verify_unresolved_payment.sql
+--   npm run verify:unresolved-payment
 --
 -- Assertion-only: every check RAISES on failure. One transaction, ends in
 -- ROLLBACK, so no fixture survives.

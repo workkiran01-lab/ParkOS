@@ -1,6 +1,6 @@
 -- DEV-ONLY verification of the booth and permit refund ledgers.
 --
---   npx supabase db query --linked --file supabase/dev-only/20260906000000_verify_refund_ledgers.sql
+--   npm run verify:refund-ledgers
 --
 -- Assertion-only: every check RAISES on failure. One transaction, ends in
 -- ROLLBACK, so no fixture survives.

@@ -15,9 +15,9 @@
 --   Stripe succeeded 700c + no booth rows = 700c, exactly the legacy result.
 --
 -- Run only after both 20260825010000_booth_payments.sql and
--- 20260826000000_booth_revenue_reporting.sql have been applied to parkos-dev:
+-- 20260826000000_booth_revenue_reporting.sql have been applied locally:
 --
---   npx supabase db query --linked --file supabase/dev-only/20260826000000_verify_booth_revenue_reporting.sql
+--   npm run verify:booth-revenue
 
 begin;
 
