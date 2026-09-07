@@ -6,26 +6,72 @@ on:
   push:
     branches: [main]
 
+env:
+  SUPABASE_TELEMETRY_DISABLED: '1'
+  PARKOS_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:54322/postgres
+
 jobs:
-  ci:
+  fast:
+    name: Fast checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci
+      - run: npm run format:check
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm run typecheck:edge
+      - run: npm test
+      - run: npm run build
+      - run: git diff --exit-code -- src/routeTree.gen.ts
+
+  database:
+    name: Local database verification
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
           cache: npm
 
       - run: npm ci
+      - run: npm run check:local-db
+      - run: npx supabase start --exclude studio,imgproxy,mailpit,vector,logflare
+      - run: npx supabase db reset --local
+      - run: npx supabase status -o env >> "$GITHUB_ENV"
+      - run: npm run db:seed:dev
+      - run: npm run test:db
+      - run: npm run test:concurrency
+      - if: always()
+        run: npx supabase stop --no-backup
 
-      - run: npm run lint
+  financial:
+    name: Local financial verification
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
 
-      - run: npm run test:sql-guard
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
 
-      - run: npx tsc --noEmit -p tsconfig.app.json
-
-      - run: npm run build
-        env:
-          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
-          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
+      - run: npm ci
+      - run: npm run check:local-db
+      - run: npx supabase start --exclude studio,imgproxy,mailpit,vector,logflare
+      - run: npx supabase db reset --local
+      - run: npx supabase status -o env >> "$GITHUB_ENV"
+      - run: npm run db:seed:dev
+      - run: npm run test:financial
+      - if: always()
+        run: npx supabase stop --no-backup

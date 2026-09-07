@@ -31,6 +31,36 @@ export function assertLoopbackDatabaseUrl(value) {
   return url.toString()
 }
 
+export function assertLoopbackHttpUrl(
+  value,
+  variableName = 'PARKOS_TEST_SUPABASE_URL',
+) {
+  if (!value) {
+    throw new Error(
+      `${variableName} is required for local Supabase verification.`,
+    )
+  }
+
+  let url
+  try {
+    url = new URL(value)
+  } catch {
+    throw new Error(`${variableName} must be a valid HTTP URL.`)
+  }
+
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+    throw new Error(`${variableName} must use the http or https protocol.`)
+  }
+
+  if (!loopbackHosts.has(url.hostname.toLowerCase())) {
+    throw new Error(
+      `Refusing local Supabase verification against non-loopback host ${url.hostname}.`,
+    )
+  }
+
+  return url.toString()
+}
+
 function main() {
   const url = new URL(
     assertLoopbackDatabaseUrl(process.env.PARKOS_TEST_DATABASE_URL),

@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { assertLoopbackDatabaseUrl } from './local-database.mjs'
+import {
+  assertLoopbackDatabaseUrl,
+  assertLoopbackHttpUrl,
+} from './local-database.mjs'
 
 test('accepts PostgreSQL URLs targeting IPv4, IPv6, or named loopback', () => {
   for (const url of [
@@ -30,4 +33,15 @@ test('rejects every non-loopback database host before verification', () => {
       /Refusing database verification against non-loopback host/u,
     )
   }
+})
+
+test('accepts only loopback Supabase HTTP endpoints', () => {
+  assert.equal(
+    assertLoopbackHttpUrl('http://127.0.0.1:54321'),
+    'http://127.0.0.1:54321/',
+  )
+  assert.throws(
+    () => assertLoopbackHttpUrl('https://project.supabase.co'),
+    /non-loopback host/,
+  )
 })
