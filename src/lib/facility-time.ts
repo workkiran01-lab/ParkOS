@@ -49,6 +49,20 @@ export function instantToFacilityInput(
   return `${pad(parts.year, 4)}-${pad(parts.month)}-${pad(parts.day)}T${pad(parts.hour)}:${pad(parts.minute)}`
 }
 
+/** Render a stored instant on the facility clock for operational UI. */
+export function formatInstantForFacility(
+  instant: Date | string,
+  timeZone: string,
+) {
+  const date = instant instanceof Date ? instant : new Date(instant)
+  if (Number.isNaN(date.getTime()) || !isValidIanaTimeZone(timeZone)) return '—'
+  return date.toLocaleString(undefined, {
+    timeZone,
+    dateStyle: 'medium',
+    timeStyle: 'short',
+  })
+}
+
 /**
  * Convert a wall-clock value entered for a facility to a canonical UTC ISO
  * timestamp. A spring-forward gap is rejected. During a fall-back overlap,

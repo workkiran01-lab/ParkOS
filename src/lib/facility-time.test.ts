@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import {
   FacilityTimeError,
   facilityInputToUtc,
+  formatInstantForFacility,
   instantToFacilityInput,
   isValidIanaTimeZone,
   parseFacilityWindow,
@@ -20,6 +21,25 @@ assert.equal(
 assert.equal(
   instantToFacilityInput('2026-01-15T18:30:00.000Z', 'America/Los_Angeles'),
   '2026-01-15T10:30',
+)
+
+const originalProcessTimezone = process.env.TZ
+process.env.TZ = 'Pacific/Auckland'
+const fromAucklandBrowser = facilityInputToUtc(
+  '2026-01-15T10:30',
+  'America/Los_Angeles',
+)
+process.env.TZ = 'America/New_York'
+const fromNewYorkBrowser = facilityInputToUtc(
+  '2026-01-15T10:30',
+  'America/Los_Angeles',
+)
+process.env.TZ = originalProcessTimezone
+assert.equal(fromAucklandBrowser, fromNewYorkBrowser)
+assert.equal(fromAucklandBrowser, '2026-01-15T18:30:00.000Z')
+assert.match(
+  formatInstantForFacility('2026-01-15T18:30:00.000Z', 'America/Los_Angeles'),
+  /Jan 15, 2026, 10:30/,
 )
 
 // Spring-forward wall time does not exist and must never be silently shifted.

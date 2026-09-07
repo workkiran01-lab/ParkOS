@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { createFileRoute } from '@tanstack/react-router'
 import type { QuoteBreakdown } from '@/components/facility/PricingSection'
-import { defaultLocalDatetime, dollars } from '@/lib/format'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
@@ -30,6 +29,12 @@ import {
 } from '@/components/ui/table'
 import { useFacility } from '@/hooks/useFacility'
 import { useRole } from '@/hooks/useRole'
+import {
+  FacilityTimeError,
+  instantToFacilityInput,
+  parseFacilityWindow,
+} from '@/lib/facility-time'
+import { dollars } from '@/lib/format'
 import { spaceTypes, type SpaceRow, type ZoneRow } from '@/lib/holds'
 import { supabase } from '@/lib/supabase'
 import { Field } from '@/routes/login'
@@ -45,8 +50,8 @@ function Availability() {
   const { facilities, error: facilitiesError } = useFacility()
   const [zones, setZones] = useState<ZoneRow[]>([])
   const [facilityId, setFacilityId] = useState('')
-  const [start, setStart] = useState(() => defaultLocalDatetime())
-  const [end, setEnd] = useState(() => defaultLocalDatetime(4 * 3600_000))
+  const [start, setStart] = useState('')
+  const [end, setEnd] = useState('')
   const [spaceType, setSpaceType] = useState(ANY)
   const [results, setResults] = useState<SpaceRow[] | null>(null)
   const [quotes, setQuotes] = useState<Map<string, QuoteBreakdown | string>>(
@@ -55,8 +60,8 @@ function Availability() {
   const [searching, setSearching] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  const allowed =
-    role === 'admin' || role === 'manager' || role === 'attendant'
+  const allowed = role === 'admin' || role === 'manager' || role === 'attendant'
+  const facility = facilities.find((option) => option.id === facilityId)
 
   useEffect(() => {
     if (roleLoading || !allowed) return
@@ -66,6 +71,37 @@ function Availability() {
     })
   }, [allowed, facilities, facilitiesError, roleLoading])
 
+  useEffect(() => {
+    if (!facility) return
+    let cancelled = false
+    void Promise.resolve().then(() => {
+      if (cancelled) return
+      try {
+        setStart(instantToFacilityInput(new Date(), facility.timezone))
+        setEnd(
+          instantToFacilityInput(
+            new Date(Date.now() + 4 * 3_600_000),
+            facility.timezone,
+          ),
+        )
+        setError(null)
+      } catch (caught) {
+        setStart('')
+        setEnd('')
+        setError(
+          caught instanceof FacilityTimeError
+            ? caught.message
+            : 'The facility timezone could not be loaded.',
+        )
+      }
+      setResults(null)
+      setQuotes(new Map())
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [facility])
+
   const zoneById = useMemo(
     () => new Map(zones.map((zone) => [zone.id, zone])),
     [zones],
@@ -73,14 +109,19 @@ function Availability() {
 
   async function search(event: FormEvent) {
     event.preventDefault()
-    const startDate = new Date(start)
-    const endDate = new Date(end)
-    if (
-      Number.isNaN(startDate.getTime()) ||
-      Number.isNaN(endDate.getTime()) ||
-      endDate <= startDate
-    ) {
-      setError('Enter a valid window: the end must be after the start.')
+    if (!facility) {
+      setError('Choose a facility.')
+      return
+    }
+    let window
+    try {
+      window = parseFacilityWindow(start, end, facility.timezone)
+    } catch (caught) {
+      setError(
+        caught instanceof FacilityTimeError
+          ? caught.message
+          : 'Enter a valid arrival and departure.',
+      )
       return
     }
 
@@ -92,8 +133,8 @@ function Availability() {
     const [spacesResult, zonesResult] = await Promise.all([
       supabase.rpc('find_available_spaces', {
         p_facility_id: facilityId,
-        p_start: startDate.toISOString(),
-        p_end: endDate.toISOString(),
+        p_start: window.startIso,
+        p_end: window.endIso,
         p_space_type: spaceType === ANY ? null : spaceType,
       }),
       supabase
@@ -116,12 +157,27 @@ function Availability() {
   }
 
   async function quoteSpace(space: SpaceRow) {
+    if (!facility) return
+    let window
+    try {
+      window = parseFacilityWindow(start, end, facility.timezone)
+    } catch (caught) {
+      setError(
+        caught instanceof FacilityTimeError
+          ? caught.message
+          : 'Enter a valid arrival and departure.',
+      )
+      return
+    }
     setQuotes((current) => new Map(current).set(space.id, 'loading'))
-    const { data, error: quoteError } = await supabase.rpc('quote_reservation', {
-      p_space_id: space.id,
-      p_start: new Date(start).toISOString(),
-      p_end: new Date(end).toISOString(),
-    })
+    const { data, error: quoteError } = await supabase.rpc(
+      'quote_reservation',
+      {
+        p_space_id: space.id,
+        p_start: window.startIso,
+        p_end: window.endIso,
+      },
+    )
     setQuotes((current) =>
       new Map(current).set(
         space.id,
@@ -148,8 +204,8 @@ function Availability() {
       <div>
         <h1 className="text-3xl font-semibold tracking-tight">Availability</h1>
         <p className="mt-1 text-muted-foreground">
-          Find spaces free for a window — no overlapping reservation, permit,
-          or maintenance hold.
+          Find spaces free for a facility-local window — no overlapping
+          reservation, permit, or maintenance hold.
         </p>
       </div>
 
@@ -256,9 +312,13 @@ function Availability() {
                               Quote
                             </Button>
                           ) : quote === 'loading' ? (
-                            <span className="text-muted-foreground">Quoting…</span>
+                            <span className="text-muted-foreground">
+                              Quoting…
+                            </span>
                           ) : typeof quote === 'string' ? (
-                            <span className="text-sm text-destructive">{quote}</span>
+                            <span className="text-sm text-destructive">
+                              {quote}
+                            </span>
                           ) : (
                             <Badge variant="outline">
                               {dollars(quote.total_cents)} {quote.currency}

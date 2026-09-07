@@ -64,11 +64,15 @@ export function formatMoney(cents: number, currency: string): string {
 
 function formatDay(value: string | undefined, timezone: string): string {
   if (!value) return '—'
-  const date = new Date(value.length <= 10 ? `${value}T00:00:00Z` : value)
+  const localCalendarDate = value.length <= 10
+  const date = new Date(localCalendarDate ? `${value}T00:00:00Z` : value)
   if (Number.isNaN(date.getTime())) return String(value)
   return new Intl.DateTimeFormat('en-US', {
     dateStyle: 'medium',
-    timeZone: timezone || 'UTC',
+    // price_breakdown.date is already a facility-local calendar date. Formatting
+    // that string through the facility offset would incorrectly move western
+    // zones to the previous day; stored instants still use the facility zone.
+    timeZone: localCalendarDate ? 'UTC' : timezone,
   }).format(date)
 }
 
@@ -86,7 +90,10 @@ function formatHours(hours: number | undefined): string {
  * still scannable, just not tappable. Same shape of degradation as a missing
  * RESEND_API_KEY: the receipt is never blocked on configuration.
  */
-export function buildQrPayload(appBaseUrl: string, bookingCode: string): string {
+export function buildQrPayload(
+  appBaseUrl: string,
+  bookingCode: string,
+): string {
   const origin = appBaseUrl.trim().replace(/\/+$/, '')
   return origin ? `${origin}/checkin/${bookingCode}` : bookingCode
 }

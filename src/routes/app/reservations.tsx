@@ -317,7 +317,7 @@ function StaffReservations() {
                         <TableCell>{row.facility_name}</TableCell>
                         <TableCell>{row.space_number}</TableCell>
                         <TableCell className="text-muted-foreground">
-                          {formatRange(row.during)}
+                          {formatRange(row.during, row.facility_timezone)}
                         </TableCell>
                         <TableCell>
                           <Badge
@@ -348,6 +348,7 @@ function StaffReservations() {
                                 spaceId={row.space_id}
                                 startIso={start.toISOString()}
                                 endIso={end.toISOString()}
+                                facilityTimezone={row.facility_timezone}
                                 isStaff
                                 allowExtend={
                                   !row.payment ||

@@ -41,6 +41,9 @@ export async function issueReceiptForPayment(
     .single()
   if (error || !data) throw error ?? new Error('reservation_not_found')
   const reservation = data as unknown as ReservationDetail
+  if (!reservation.facilities?.timezone) {
+    throw new Error('reservation_facility_timezone_missing')
+  }
 
   // The row is the idempotency claim: unique(payment_id) means a duplicate
   // delivery that reaches here again just gets a conflict and stops.
@@ -58,7 +61,8 @@ export async function issueReceiptForPayment(
 
   if (insertError) {
     // 23505 = unique_violation: receipt already issued for this payment.
-    if (insertError.code === '23505') return { issued: false, reason: 'already_issued' }
+    if (insertError.code === '23505')
+      return { issued: false, reason: 'already_issued' }
     throw insertError
   }
   const receiptNumber = inserted.receipt_number as string
@@ -73,7 +77,7 @@ export async function issueReceiptForPayment(
     spaceNumber: reservation.spaces?.space_number ?? '—',
     zoneName: reservation.spaces?.zones?.name ?? '',
     customerName: reservation.customers?.full_name ?? 'Customer',
-    timezone: reservation.facilities?.timezone ?? 'UTC',
+    timezone: reservation.facilities.timezone,
     createdAt: new Date().toISOString(),
     currency: reservation.currency,
     totalCents: reservation.total_cents,

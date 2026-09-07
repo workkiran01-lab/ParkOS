@@ -1,13 +1,9 @@
 // Helpers for working with Postgres tstzrange values over the wire.
 // Ranges are stored UTC (ARCHITECTURE.md) and rendered local at the edge.
+import { isValidIanaTimeZone } from '@/lib/facility-time'
 
 export type SpaceType =
-  | 'standard'
-  | 'compact'
-  | 'accessible'
-  | 'ev'
-  | 'oversized'
-  | 'motorcycle'
+  'standard' | 'compact' | 'accessible' | 'ev' | 'oversized' | 'motorcycle'
 
 export type SpaceStatus =
   | 'available'
@@ -99,11 +95,13 @@ export function rangeContainsNow(value: string) {
   )
 }
 
-export function formatRange(value: string) {
+export function formatRange(value: string, timeZone: string) {
+  if (!isValidIanaTimeZone(timeZone)) return '—'
   const { start, end } = parseTstzrange(value)
   const fmt = (date: Date | null) =>
     date
       ? date.toLocaleString(undefined, {
+          timeZone,
           dateStyle: 'medium',
           timeStyle: 'short',
         })
@@ -120,6 +118,7 @@ export function batchSpaceNumbers(
   const width = Math.max(3, String(startingNumber + count - 1).length)
   return Array.from(
     { length: count },
-    (_, index) => `${prefix}${String(startingNumber + index).padStart(width, '0')}`,
+    (_, index) =>
+      `${prefix}${String(startingNumber + index).padStart(width, '0')}`,
   )
 }

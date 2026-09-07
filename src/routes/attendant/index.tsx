@@ -33,7 +33,10 @@ function AttendantSearch() {
     setResults(null)
     setCheckedIn(null)
     try {
-      const all = await loadFacilityReservations(facility.id, ['pending', 'confirmed'])
+      const all = await loadFacilityReservations(facility.id, [
+        'pending',
+        'confirmed',
+      ])
       const q = term.trim().toLowerCase()
       const matched = q
         ? all.filter(
@@ -104,7 +107,10 @@ function AttendantSearch() {
       {results !== null && (
         <div className="space-y-4">
           {results.map((r) => (
-            <div key={r.id} className="space-y-3 rounded-xl border bg-background p-4">
+            <div
+              key={r.id}
+              className="space-y-3 rounded-xl border bg-background p-4"
+            >
               <div className="space-y-1">
                 <p className="text-xl font-semibold">{r.customer_name}</p>
                 <p className="font-mono text-base text-muted-foreground">
@@ -116,9 +122,11 @@ function AttendantSearch() {
                 </p>
                 <p className="text-base text-muted-foreground">
                   {r.license_plate ? `Plate ${r.license_plate} · ` : ''}
-                  {formatRange(r.during)}
+                  {facility ? formatRange(r.during, facility.timezone) : '—'}
                 </p>
-                <p className="text-sm text-muted-foreground capitalize">{r.status}</p>
+                <p className="text-sm text-muted-foreground capitalize">
+                  {r.status}
+                </p>
               </div>
               <button
                 type="button"
@@ -135,6 +143,7 @@ function AttendantSearch() {
             <WalkIn
               orgId={orgId}
               facilityId={facility.id}
+              facilityTimezone={facility.timezone}
               initialPlate={term}
               onCheckedIn={() => {
                 setResults(null)

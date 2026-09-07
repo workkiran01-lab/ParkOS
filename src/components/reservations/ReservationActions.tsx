@@ -16,7 +16,12 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { friendlyError } from '@/lib/errors'
-import { dollars, isoToLocalInput } from '@/lib/format'
+import {
+  FacilityTimeError,
+  facilityInputToUtc,
+  instantToFacilityInput,
+} from '@/lib/facility-time'
+import { dollars } from '@/lib/format'
 import { supabase } from '@/lib/supabase'
 import { Field } from '@/routes/login'
 
@@ -26,6 +31,7 @@ type Props = {
   spaceId: string
   startIso: string
   endIso: string
+  facilityTimezone: string
   /** Staff see a Confirm action and use the staff quote function; customers
    * use the elevated public wrapper. */
   isStaff: boolean
@@ -43,6 +49,7 @@ export function ReservationActions({
   spaceId,
   startIso,
   endIso,
+  facilityTimezone,
   isStaff,
   allowExtend = true,
   correction,
@@ -51,7 +58,9 @@ export function ReservationActions({
   const [cancelOpen, setCancelOpen] = useState(false)
   const [extendOpen, setExtendOpen] = useState(false)
   const [reason, setReason] = useState('')
-  const [newEnd, setNewEnd] = useState(() => isoToLocalInput(endIso))
+  const [newEnd, setNewEnd] = useState(() =>
+    instantToFacilityInput(endIso, facilityTimezone),
+  )
   const [preview, setPreview] = useState<QuoteBreakdown | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -87,8 +96,18 @@ export function ReservationActions({
   async function previewExtend() {
     setError(null)
     setPreview(null)
-    const end = new Date(newEnd)
-    if (Number.isNaN(end.getTime()) || end <= new Date(endIso)) {
+    let endIsoValue
+    try {
+      endIsoValue = facilityInputToUtc(newEnd, facilityTimezone)
+    } catch (caught) {
+      setError(
+        caught instanceof FacilityTimeError
+          ? caught.message
+          : 'Pick a valid new end.',
+      )
+      return
+    }
+    if (new Date(endIsoValue) <= new Date(endIso)) {
       setError('Pick a new end later than the current end.')
       return
     }
@@ -97,7 +116,7 @@ export function ReservationActions({
     const { data, error: quoteError } = await supabase.rpc(fn, {
       p_space_id: spaceId,
       p_start: startIso,
-      p_end: end.toISOString(),
+      p_end: endIsoValue,
     })
     setBusy(false)
     if (quoteError) {
@@ -113,8 +132,18 @@ export function ReservationActions({
   }
 
   async function commitExtend() {
-    const end = new Date(newEnd)
-    if (Number.isNaN(end.getTime()) || end <= new Date(endIso)) {
+    let endIsoValue
+    try {
+      endIsoValue = facilityInputToUtc(newEnd, facilityTimezone)
+    } catch (caught) {
+      setError(
+        caught instanceof FacilityTimeError
+          ? caught.message
+          : 'Pick a valid new end.',
+      )
+      return
+    }
+    if (new Date(endIsoValue) <= new Date(endIso)) {
       setError('Pick a new end later than the current end.')
       return
     }
@@ -122,7 +151,7 @@ export function ReservationActions({
     setError(null)
     const { error: extendError } = await supabase.rpc('extend_reservation', {
       p_reservation_id: reservationId,
-      p_new_end: end.toISOString(),
+      p_new_end: endIsoValue,
     })
     setBusy(false)
     if (extendError) {
@@ -184,7 +213,7 @@ export function ReservationActions({
           size="sm"
           variant="outline"
           onClick={() => {
-            setNewEnd(isoToLocalInput(endIso))
+            setNewEnd(instantToFacilityInput(endIso, facilityTimezone))
             setPreview(null)
             setError(null)
             setExtendOpen(true)

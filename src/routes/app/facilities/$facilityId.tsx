@@ -20,6 +20,7 @@ import {
 import { Input } from '@/components/ui/input'
 import { PageSpinner } from '@/components/ui/Spinner'
 import { useRole } from '@/hooks/useRole'
+import { isValidIanaTimeZone } from '@/lib/facility-time'
 import type { HoldRow, SpaceRow, ZoneRow } from '@/lib/holds'
 import { supabase } from '@/lib/supabase'
 import { Field } from '@/routes/login'
@@ -159,6 +160,12 @@ function FacilityDetail() {
   async function save(event: FormEvent) {
     event.preventDefault()
     if (!facility) return
+    if (!isValidIanaTimeZone(timezone.trim())) {
+      setError(
+        'Enter an IANA timezone such as America/Los_Angeles, not PST or EST.',
+      )
+      return
+    }
     setSaving(true)
     setError(null)
 
@@ -324,6 +331,7 @@ function FacilityDetail() {
       <PricingSection
         orgId={orgId!}
         facilityId={facility.id}
+        facilityTimezone={facility.timezone}
         zones={zones}
         spaces={spaces}
         rules={rules}
@@ -339,6 +347,7 @@ function FacilityDetail() {
       />
 
       <MaintenanceSection
+        facilityTimezone={facility.timezone}
         zones={zones}
         spaces={spaces}
         holds={holds}

@@ -1,4 +1,10 @@
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type FormEvent,
+} from 'react'
 import { toast } from 'sonner'
 import { createFileRoute } from '@tanstack/react-router'
 import { Badge } from '@/components/ui/badge'
@@ -39,12 +45,17 @@ import {
 import { useFacility } from '@/hooks/useFacility'
 import { useRole } from '@/hooks/useRole'
 import { edgeFunctionError, friendlyError } from '@/lib/errors'
+import {
+  FacilityTimeError,
+  facilityInputToUtc,
+  instantToFacilityInput,
+} from '@/lib/facility-time'
 import { dollars } from '@/lib/format'
 import { isCancelling, permitCancelOutcome } from '@/lib/permit-cancel'
 import { supabase } from '@/lib/supabase'
 import { Field } from '@/routes/login'
 
-type FacilityOption = { id: string; name: string }
+type FacilityOption = { id: string; name: string; timezone: string }
 type AvailableSpace = { id: string; space_number: string; space_type: string }
 type CustomerOption = { id: string; full_name: string; email: string | null }
 
@@ -52,6 +63,7 @@ type PermitRow = {
   id: string
   facility_id: string
   facility_name: string
+  facility_timezone: string
   space_number: string
   customer_name: string
   monthly_rate_cents: number
@@ -98,7 +110,10 @@ function Permits() {
     setLinkBusyId(null)
     if (linkError || !data?.payment_url) {
       toast.error(
-        await edgeFunctionError(linkError, 'No payment link is available for this permit.'),
+        await edgeFunctionError(
+          linkError,
+          'No payment link is available for this permit.',
+        ),
       )
       return
     }
@@ -135,6 +150,7 @@ function Permits() {
 
     const permits = permitResult.data ?? []
     const facilityName = new Map(facilities.map((f) => [f.id, f.name]))
+    const facilityTimezone = new Map(facilities.map((f) => [f.id, f.timezone]))
 
     const spaceIds = [...new Set(permits.map((p) => p.space_id))]
     const customerIds = [...new Set(permits.map((p) => p.customer_id))]
@@ -144,7 +160,10 @@ function Permits() {
         ? supabase.from('spaces').select('id, space_number').in('id', spaceIds)
         : Promise.resolve({ data: [], error: null }),
       customerIds.length
-        ? supabase.from('customers').select('id, full_name').in('id', customerIds)
+        ? supabase
+            .from('customers')
+            .select('id, full_name')
+            .in('id', customerIds)
         : Promise.resolve({ data: [], error: null }),
     ])
 
@@ -159,14 +178,19 @@ function Permits() {
       return
     }
 
-    const spaceNumber = new Map((spaceRes.data ?? []).map((s) => [s.id, s.space_number]))
-    const customerName = new Map((custRes.data ?? []).map((c) => [c.id, c.full_name]))
+    const spaceNumber = new Map(
+      (spaceRes.data ?? []).map((s) => [s.id, s.space_number]),
+    )
+    const customerName = new Map(
+      (custRes.data ?? []).map((c) => [c.id, c.full_name]),
+    )
 
     setRows(
       permits.map((p) => ({
         id: p.id,
         facility_id: p.facility_id,
         facility_name: facilityName.get(p.facility_id) ?? 'Facility',
+        facility_timezone: facilityTimezone.get(p.facility_id) ?? '',
         space_number: spaceNumber.get(p.space_id) ?? '—',
         customer_name: customerName.get(p.customer_id) ?? 'Unknown',
         monthly_rate_cents: p.monthly_rate_cents,
@@ -278,20 +302,30 @@ function Permits() {
                 <TableBody>
                   {visible.map((row) => (
                     <TableRow key={row.id}>
-                      <TableCell className="font-medium">{row.customer_name}</TableCell>
+                      <TableCell className="font-medium">
+                        {row.customer_name}
+                      </TableCell>
                       <TableCell>{row.facility_name}</TableCell>
-                      <TableCell className="tabular-nums">{row.space_number}</TableCell>
+                      <TableCell className="tabular-nums">
+                        {row.space_number}
+                      </TableCell>
                       <TableCell className="text-right tabular-nums">
                         {dollars(row.monthly_rate_cents)} {row.currency}
                       </TableCell>
                       <TableCell>
                         <PermitStatusBadge
                           status={row.status}
-                          cancellationRequestedAt={row.cancellation_requested_at}
+                          cancellationRequestedAt={
+                            row.cancellation_requested_at
+                          }
                         />
                       </TableCell>
                       <TableCell className="text-muted-foreground">
-                        {billingPeriod(row.current_period_start, row.current_period_end)}
+                        {billingPeriod(
+                          row.current_period_start,
+                          row.current_period_end,
+                          row.facility_timezone,
+                        )}
                       </TableCell>
                       <TableCell className="text-right">
                         <div className="flex justify-end gap-2">
@@ -302,7 +336,9 @@ function Permits() {
                               disabled={linkBusyId === row.id}
                               onClick={() => getPaymentLink(row)}
                             >
-                              {linkBusyId === row.id ? 'Fetching…' : 'Get payment link'}
+                              {linkBusyId === row.id
+                                ? 'Fetching…'
+                                : 'Get payment link'}
                             </Button>
                           )}
                           {row.status !== 'cancelled' && (
@@ -348,7 +384,9 @@ function IssuePermitForm({
   onIssued: () => void
 }) {
   const [facilityId, setFacilityId] = useState(facilities[0]?.id ?? '')
-  const [startDate, setStartDate] = useState(() => todayInputValue())
+  const [startDate, setStartDate] = useState(() =>
+    facilities[0] ? todayInputValue(facilities[0].timezone) : '',
+  )
   const [spaces, setSpaces] = useState<AvailableSpace[] | null>(null)
   const [spaceId, setSpaceId] = useState('')
   const [searching, setSearching] = useState(false)
@@ -363,6 +401,7 @@ function IssuePermitForm({
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [setupUrl, setSetupUrl] = useState<string | null>(null)
+  const facility = facilities.find((option) => option.id === facilityId)
 
   const loadCustomers = useCallback(async () => {
     const { data } = await supabase
@@ -382,19 +421,30 @@ function IssuePermitForm({
   // from the start date onward. Reuse Week 6's availability search with a far
   // horizon to approximate the open-ended window issue_permit will insert.
   async function findSpaces() {
-    if (!facilityId) return
+    if (!facilityId || !facility) return
     setSearching(true)
     setError(null)
     setSpaces(null)
     setSpaceId('')
-    const start = startAtIso(startDate)
-    const horizon = new Date(start)
-    horizon.setFullYear(horizon.getFullYear() + 50)
-    const { data, error: searchError } = await supabase.rpc('find_available_spaces', {
-      p_facility_id: facilityId,
-      p_start: start,
-      p_end: horizon.toISOString(),
-    })
+    let start
+    try {
+      start = startAtIso(startDate, facility.timezone)
+    } catch (caught) {
+      setSearching(false)
+      setError(
+        caught instanceof FacilityTimeError
+          ? caught.message
+          : 'Enter a valid permit start date.',
+      )
+      return
+    }
+    const { data, error: searchError } = await supabase.rpc(
+      'find_available_spaces_for_permit',
+      {
+        p_facility_id: facilityId,
+        p_start: start,
+      },
+    )
     setSearching(false)
     if (searchError) {
       setError(friendlyError(searchError, 'Could not load available spaces.'))
@@ -431,12 +481,23 @@ function IssuePermitForm({
   async function submit(event: FormEvent) {
     event.preventDefault()
     const cents = Math.round(Number(rateDollars) * 100)
-    if (!facilityId || !spaceId || !customerId) {
+    if (!facilityId || !facility || !spaceId || !customerId) {
       setError('Pick a facility, space, and customer first.')
       return
     }
     if (!Number.isFinite(cents) || cents <= 0) {
       setError('Enter a monthly rate greater than zero.')
+      return
+    }
+    let permitStart
+    try {
+      permitStart = startAtIso(startDate, facility.timezone)
+    } catch (caught) {
+      setError(
+        caught instanceof FacilityTimeError
+          ? caught.message
+          : 'Enter a valid permit start date.',
+      )
       return
     }
 
@@ -445,15 +506,18 @@ function IssuePermitForm({
 
     // 1. Create the permit + its open-ended hold atomically (7-arg signature:
     //    org, facility, space, customer, start, monthly_rate_cents, currency).
-    const { data: permit, error: issueError } = await supabase.rpc('issue_permit', {
-      p_org_id: orgId,
-      p_facility_id: facilityId,
-      p_space_id: spaceId,
-      p_customer_id: customerId,
-      p_start: startAtIso(startDate),
-      p_monthly_rate_cents: cents,
-      p_currency: 'USD',
-    })
+    const { data: permit, error: issueError } = await supabase.rpc(
+      'issue_permit',
+      {
+        p_org_id: orgId,
+        p_facility_id: facilityId,
+        p_space_id: spaceId,
+        p_customer_id: customerId,
+        p_start: permitStart,
+        p_monthly_rate_cents: cents,
+        p_currency: 'USD',
+      },
+    )
     if (issueError || !permit) {
       setSubmitting(false)
       setError(friendlyError(issueError, 'The permit could not be issued.'))
@@ -478,10 +542,13 @@ function IssuePermitForm({
       // rather than leaving free parking on an unavailable space. The RPC
       // refuses if a subscription id has since appeared, which means Stripe
       // actually succeeded and the webhook owns the permit.
-      const { error: abandonError } = await supabase.rpc('abandon_pending_permit', {
-        p_permit_id: permitId,
-        p_reason: 'Stripe subscription setup failed',
-      })
+      const { error: abandonError } = await supabase.rpc(
+        'abandon_pending_permit',
+        {
+          p_permit_id: permitId,
+          p_reason: 'Stripe subscription setup failed',
+        },
+      )
       setError(
         await edgeFunctionError(
           subError,
@@ -552,6 +619,12 @@ function IssuePermitForm({
                 value={facilityId}
                 onValueChange={(value) => {
                   setFacilityId(value)
+                  const selected = facilities.find(
+                    (option) => option.id === value,
+                  )
+                  setStartDate(
+                    selected ? todayInputValue(selected.timezone) : '',
+                  )
                   setSpaces(null)
                   setSpaceId('')
                 }}
@@ -724,13 +797,19 @@ function CancelPermitDialog({
     // Record the intent before contacting Stripe, so the row reads "Cancelling"
     // even if the operator closes the browser while Stripe is answering. This
     // writes ONLY a timestamp: no status change and no hold release.
-    const { error: intentError } = await supabase.rpc('request_permit_cancellation', {
-      p_permit_id: permit.id,
-      p_reason: reason.trim() || null,
-    })
+    const { error: intentError } = await supabase.rpc(
+      'request_permit_cancellation',
+      {
+        p_permit_id: permit.id,
+        p_reason: reason.trim() || null,
+      },
+    )
     if (intentError) {
       setBusy(false)
-      const failed = permitCancelOutcome({ hasSubscription: true, intentFailed: true })
+      const failed = permitCancelOutcome({
+        hasSubscription: true,
+        intentFailed: true,
+      })
       toast.error(friendlyError(intentError, failed.message))
       return
     }
@@ -740,7 +819,9 @@ function CancelPermitDialog({
     // active and still billing — which is exactly what the operator is told.
     const { error: subError } = await supabase.functions.invoke(
       'create-permit-subscription',
-      { body: { permit_id: permit.id, action: 'cancel', reason: reason.trim() } },
+      {
+        body: { permit_id: permit.id, action: 'cancel', reason: reason.trim() },
+      },
     )
     setBusy(false)
 
@@ -774,7 +855,11 @@ function CancelPermitDialog({
           />
         </Field>
         <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={busy}>
+          <Button
+            variant="outline"
+            onClick={() => onOpenChange(false)}
+            disabled={busy}
+          >
             Keep permit
           </Button>
           <Button variant="destructive" onClick={confirmCancel} disabled={busy}>
@@ -809,28 +894,36 @@ function PermitStatusBadge({
   return <Badge variant={variant}>{label(status)}</Badge>
 }
 
-function billingPeriod(start: string | null, end: string | null) {
+function billingPeriod(
+  start: string | null,
+  end: string | null,
+  timeZone: string,
+) {
   if (!start && !end) return 'Awaiting first invoice'
   const fmt = (iso: string | null) =>
-    iso ? new Date(iso).toLocaleDateString(undefined, { dateStyle: 'medium' }) : '—'
+    iso
+      ? new Date(iso).toLocaleDateString(undefined, {
+          timeZone,
+          dateStyle: 'medium',
+        })
+      : '—'
   return `${fmt(start)} → ${fmt(end)}`
 }
 
-/** A date input value (YYYY-MM-DD) for today, in local time. */
-function todayInputValue() {
-  const now = new Date()
-  now.setMinutes(now.getMinutes() - now.getTimezoneOffset())
-  return now.toISOString().slice(0, 10)
+/** A date input value (YYYY-MM-DD) for today on the facility clock. */
+function todayInputValue(timeZone: string) {
+  return instantToFacilityInput(new Date(), timeZone).slice(0, 10)
 }
 
-/** Interpret a date input as the start instant. An empty value falls back to
- * now so a permit always has a valid start. */
-function startAtIso(dateValue: string) {
-  if (!dateValue) return new Date().toISOString()
-  const parsed = new Date(`${dateValue}T00:00:00`)
-  return Number.isNaN(parsed.getTime())
-    ? new Date().toISOString()
-    : parsed.toISOString()
+/** Interpret midnight on the selected date using the facility timezone. */
+function startAtIso(dateValue: string, timeZone: string) {
+  if (!dateValue) {
+    throw new FacilityTimeError(
+      'Enter a permit start date.',
+      'INVALID_LOCAL_TIME',
+    )
+  }
+  return facilityInputToUtc(`${dateValue}T00:00`, timeZone)
 }
 
 function label(value: string) {

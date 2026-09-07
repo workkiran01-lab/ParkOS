@@ -4,18 +4,3 @@ export function dollars(cents: number) {
     currency: 'USD',
   })
 }
-
-/** Now (+ optional offset) as a datetime-local input value, in local time. */
-export function defaultLocalDatetime(offsetMs = 0) {
-  const date = new Date(Date.now() + offsetMs)
-  date.setMinutes(date.getMinutes() - date.getTimezoneOffset())
-  return date.toISOString().slice(0, 16)
-}
-
-/** An ISO timestamp as a datetime-local input value, in local time. */
-export function isoToLocalInput(iso: string) {
-  const date = new Date(iso)
-  if (Number.isNaN(date.getTime())) return ''
-  date.setMinutes(date.getMinutes() - date.getTimezoneOffset())
-  return date.toISOString().slice(0, 16)
-}

@@ -47,6 +47,7 @@ type ReservationRow = {
   booking_code: string
   facility_id: string
   facility_name: string
+  facility_timezone: string
   space_id: string
   space_number: string
   zone_name: string
@@ -371,7 +372,7 @@ function MyReservations() {
                           </p>
                         </TableCell>
                         <TableCell className="text-muted-foreground">
-                          {formatRange(row.during)}
+                          {formatRange(row.during, row.facility_timezone)}
                         </TableCell>
                         <TableCell>
                           <Badge
@@ -412,6 +413,7 @@ function MyReservations() {
                                 spaceId={row.space_id}
                                 startIso={start.toISOString()}
                                 endIso={end.toISOString()}
+                                facilityTimezone={row.facility_timezone}
                                 isStaff={false}
                                 allowExtend={
                                   !row.payment ||
@@ -555,7 +557,7 @@ function CheckoutNotice({
         code={reservation.booking_code}
         lines={[
           `${reservation.facility_name} · Space ${reservation.space_number}`,
-          formatRange(reservation.during),
+          formatRange(reservation.during, reservation.facility_timezone),
         ]}
         amount={dollars(reservation.total_cents)}
       />

@@ -22,6 +22,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
+import { useFacility } from '@/hooks/useFacility'
 import { useRole } from '@/hooks/useRole'
 import { dollars } from '@/lib/format'
 import { formatRange, parseTstzrange } from '@/lib/holds'
@@ -35,10 +36,13 @@ type HoldRow = {
   during: string
   reservation_id: string | null
   space_number: string
+  facility_timezone: string
 }
 
 type ResRow = {
   id: string
+  facility_id: string
+  facility_timezone: string
   space_id: string
   during: string
   status: string
@@ -65,6 +69,7 @@ export const Route = createFileRoute('/app/override')({
 
 function Override() {
   const { role, org_id: orgId, loading: roleLoading } = useRole()
+  const { allFacilities: facilities } = useFacility()
   const [holds, setHolds] = useState<HoldRow[]>([])
   const [reservations, setReservations] = useState<ResRow[]>([])
   const [audit, setAudit] = useState<AuditRow[]>([])
@@ -91,13 +96,17 @@ function Override() {
         .limit(200),
       supabase
         .from('reservations')
-        .select('id, space_id, customer_id, during, status, total_cents, currency')
+        .select(
+          'id, facility_id, space_id, customer_id, during, status, total_cents, currency',
+        )
         .eq('org_id', orgId)
         .order('created_at', { ascending: false })
         .limit(50),
       supabase
         .from('audit_log')
-        .select('id, actor_id, action, target_table, target_id, reason, created_at')
+        .select(
+          'id, actor_id, action, target_table, target_id, reason, created_at',
+        )
         .eq('org_id', orgId)
         .order('created_at', { ascending: false })
         .limit(100),
@@ -126,26 +135,74 @@ function Override() {
     ]
     const customerIds = [...new Set(resRows.map((r) => r.customer_id))]
     const actorIds = [
-      ...new Set(auditRows.map((a) => a.actor_id).filter((v): v is string => !!v)),
+      ...new Set(
+        auditRows.map((a) => a.actor_id).filter((v): v is string => !!v),
+      ),
     ]
 
     const [spaceRes, custRes, profRes] = await Promise.all([
       spaceIds.length
-        ? supabase.from('spaces').select('id, space_number').in('id', spaceIds)
+        ? supabase
+            .from('spaces')
+            .select('id, space_number, zone_id')
+            .in('id', spaceIds)
         : Promise.resolve({ data: [], error: null }),
       customerIds.length
-        ? supabase.from('customers').select('id, full_name').in('id', customerIds)
+        ? supabase
+            .from('customers')
+            .select('id, full_name')
+            .in('id', customerIds)
         : Promise.resolve({ data: [], error: null }),
       actorIds.length
         ? supabase.from('profiles').select('id, full_name').in('id', actorIds)
         : Promise.resolve({ data: [], error: null }),
     ])
 
-    const spaceNumber = new Map((spaceRes.data ?? []).map((s) => [s.id, s.space_number]))
-    const customerName = new Map((custRes.data ?? []).map((c) => [c.id, c.full_name]))
+    if (spaceRes.error || custRes.error || profRes.error) {
+      setError(
+        spaceRes.error?.message ??
+          custRes.error?.message ??
+          profRes.error?.message ??
+          'Details could not be loaded.',
+      )
+      setLoading(false)
+      return
+    }
+
+    const spaceRows = spaceRes.data ?? []
+    const zoneIds = [...new Set(spaceRows.map((space) => space.zone_id))]
+    const zoneRes = zoneIds.length
+      ? await supabase.from('zones').select('id, facility_id').in('id', zoneIds)
+      : { data: [], error: null }
+    if (zoneRes.error) {
+      setError(zoneRes.error.message)
+      setLoading(false)
+      return
+    }
+
+    const spaceNumber = new Map(
+      spaceRows.map((space) => [space.id, space.space_number]),
+    )
+    const customerName = new Map(
+      (custRes.data ?? []).map((c) => [c.id, c.full_name]),
+    )
+    const facilityTimezone = new Map(
+      facilities.map((facility) => [facility.id, facility.timezone]),
+    )
+    const zoneFacility = new Map(
+      (zoneRes.data ?? []).map((zone) => [zone.id, zone.facility_id]),
+    )
+    const spaceTimezone = new Map(
+      spaceRows.map((space) => [
+        space.id,
+        facilityTimezone.get(zoneFacility.get(space.zone_id) ?? '') ?? '',
+      ]),
+    )
     // Staff actors resolve to a profile name; customer actors (self-cancel)
     // have no profile, and cron has no actor at all.
-    const actorName = new Map((profRes.data ?? []).map((p) => [p.id, p.full_name]))
+    const actorName = new Map(
+      (profRes.data ?? []).map((p) => [p.id, p.full_name]),
+    )
 
     setHolds(
       holdRows.map((h) => ({
@@ -155,11 +212,14 @@ function Override() {
         during: h.during,
         reservation_id: h.reservation_id,
         space_number: spaceNumber.get(h.space_id) ?? '—',
+        facility_timezone: spaceTimezone.get(h.space_id) ?? '',
       })),
     )
     setReservations(
       resRows.map((r) => ({
         id: r.id,
+        facility_id: r.facility_id,
+        facility_timezone: facilityTimezone.get(r.facility_id) ?? '',
         space_id: r.space_id,
         during: r.during,
         status: r.status,
@@ -173,12 +233,13 @@ function Override() {
       auditRows.map((a) => ({
         ...a,
         actor_name: a.actor_id
-          ? (actorName.get(a.actor_id) ?? `${a.actor_id.slice(0, 8)} (customer)`)
+          ? (actorName.get(a.actor_id) ??
+            `${a.actor_id.slice(0, 8)} (customer)`)
           : 'system',
       })),
     )
     setLoading(false)
-  }, [orgId, allowed])
+  }, [orgId, allowed, facilities])
 
   useEffect(() => {
     if (!roleLoading) void Promise.resolve().then(load)
@@ -244,7 +305,9 @@ function Override() {
   return (
     <div className="mx-auto max-w-6xl space-y-6">
       <div>
-        <h1 className="text-3xl font-semibold tracking-tight">Override console</h1>
+        <h1 className="text-3xl font-semibold tracking-tight">
+          Override console
+        </h1>
         <p className="mt-1 text-muted-foreground">
           Manager tools: force-release holds, cancel bookings, sweep no-shows,
           and review the audit trail.
@@ -280,12 +343,14 @@ function Override() {
               <TableBody>
                 {holds.map((hold) => (
                   <TableRow key={hold.id}>
-                    <TableCell className="font-medium">{hold.space_number}</TableCell>
+                    <TableCell className="font-medium">
+                      {hold.space_number}
+                    </TableCell>
                     <TableCell>
                       <Badge variant="outline">{hold.hold_type}</Badge>
                     </TableCell>
                     <TableCell className="text-muted-foreground">
-                      {formatRange(hold.during)}
+                      {formatRange(hold.during, hold.facility_timezone)}
                     </TableCell>
                     <TableCell>
                       <Button
@@ -308,7 +373,9 @@ function Override() {
       <Card>
         <CardHeader>
           <CardTitle>Recent reservations</CardTitle>
-          <CardDescription>Cancel with a reason, or extend/confirm.</CardDescription>
+          <CardDescription>
+            Cancel with a reason, or extend/confirm.
+          </CardDescription>
           <CardAction>
             <Button disabled={sweeping} onClick={runSweep}>
               {sweeping ? 'Sweeping…' : 'Run no-show sweep now'}
@@ -351,12 +418,13 @@ function Override() {
                         </TableCell>
                         <TableCell>{row.space_number}</TableCell>
                         <TableCell className="text-muted-foreground">
-                          {formatRange(row.during)}
+                          {formatRange(row.during, row.facility_timezone)}
                         </TableCell>
                         <TableCell>
                           <Badge
                             variant={
-                              row.status === 'cancelled' || row.status === 'no_show'
+                              row.status === 'cancelled' ||
+                              row.status === 'no_show'
                                 ? 'outline'
                                 : 'default'
                             }
@@ -375,6 +443,7 @@ function Override() {
                               spaceId={row.space_id}
                               startIso={start.toISOString()}
                               endIso={end.toISOString()}
+                              facilityTimezone={row.facility_timezone}
                               isStaff
                               onDone={load}
                             />
@@ -394,8 +463,8 @@ function Override() {
         <CardHeader>
           <CardTitle>Audit log</CardTitle>
           <CardDescription>
-            Append-only record of lifecycle actions. Written only by the
-            server; read-only here.
+            Append-only record of lifecycle actions. Written only by the server;
+            read-only here.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -427,7 +496,9 @@ function Override() {
                       </TableCell>
                       <TableCell className="font-mono text-xs text-muted-foreground">
                         {entry.target_table}
-                        {entry.target_id ? `/${entry.target_id.slice(0, 8)}` : ''}
+                        {entry.target_id
+                          ? `/${entry.target_id.slice(0, 8)}`
+                          : ''}
                       </TableCell>
                       <TableCell className="text-muted-foreground">
                         {entry.reason ?? '—'}

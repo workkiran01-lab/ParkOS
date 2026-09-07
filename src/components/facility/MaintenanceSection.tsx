@@ -16,17 +16,29 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
-import { formatRange, type HoldRow, type SpaceRow, type ZoneRow } from '@/lib/holds'
+import {
+  formatRange,
+  type HoldRow,
+  type SpaceRow,
+  type ZoneRow,
+} from '@/lib/holds'
 import { supabase } from '@/lib/supabase'
 
 type Props = {
+  facilityTimezone: string
   zones: ZoneRow[]
   spaces: SpaceRow[]
   holds: HoldRow[]
   reload: () => Promise<void>
 }
 
-export function MaintenanceSection({ zones, spaces, holds, reload }: Props) {
+export function MaintenanceSection({
+  facilityTimezone,
+  zones,
+  spaces,
+  holds,
+  reload,
+}: Props) {
   const [releasing, setReleasing] = useState<string | null>(null)
 
   const spaceById = useMemo(
@@ -91,7 +103,7 @@ export function MaintenanceSection({ zones, spaces, holds, reload }: Props) {
                     </TableCell>
                     <TableCell>{zone?.name ?? '—'}</TableCell>
                     <TableCell className="text-muted-foreground">
-                      {formatRange(hold.during)}
+                      {formatRange(hold.during, facilityTimezone)}
                     </TableCell>
                     <TableCell>
                       <Button
