@@ -202,7 +202,7 @@ export function AppShell(props: AppShellProps) {
     <div className="app-shell min-h-screen bg-background">
       <aside
         className={cn(
-          'fixed inset-y-0 left-0 z-40 hidden flex-col border-r border-sidebar-border/30 bg-sidebar text-sidebar-foreground md:flex',
+          'fixed inset-y-0 left-0 z-40 hidden flex-col border-r border-sidebar-border/30 bg-sidebar text-sidebar-foreground motion-safe:transition-[width] motion-safe:duration-200 motion-safe:ease-out md:flex',
           collapsed ? 'w-[76px]' : 'w-[264px]',
         )}
       >
@@ -221,7 +221,7 @@ export function AppShell(props: AppShellProps) {
             role="dialog"
             aria-modal="true"
             aria-label="Navigation"
-            className="overlay-surface relative flex h-full w-[min(86vw,320px)] flex-col bg-sidebar text-sidebar-foreground"
+            className="overlay-surface relative flex h-full w-[min(86vw,320px)] flex-col bg-sidebar text-sidebar-foreground motion-safe:animate-in motion-safe:fade-in-0 motion-safe:slide-in-from-left-3 motion-safe:duration-200"
           >
             {sidebarInner(true)}
           </aside>
@@ -229,7 +229,7 @@ export function AppShell(props: AppShellProps) {
       )}
       <div
         className={cn(
-          'min-h-screen min-w-0',
+          'min-h-screen min-w-0 motion-safe:transition-[padding] motion-safe:duration-200 motion-safe:ease-out',
           collapsed ? 'md:pl-[76px]' : 'md:pl-[264px]',
         )}
       >
@@ -325,7 +325,7 @@ export function AppShell(props: AppShellProps) {
             </div>
           </div>
         </header>
-        <main className="min-w-0 overflow-x-hidden px-4 py-5 sm:px-6 xl:px-8">
+        <main className="page-content min-w-0 overflow-x-hidden px-4 py-5 sm:px-6 xl:px-8">
           {props.children}
         </main>
       </div>

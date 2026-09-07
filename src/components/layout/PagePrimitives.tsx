@@ -15,7 +15,7 @@ export function PageHeader({
   actions?: ReactNode
 }) {
   return (
-    <header className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+    <header className="page-intro flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
       <div className="max-w-2xl">
         {eyebrow && <p className="signage-label text-primary">{eyebrow}</p>}
         <h1 className="mt-1.5 text-2xl font-bold leading-tight tracking-[-0.035em] sm:text-3xl">
@@ -28,7 +28,9 @@ export function PageHeader({
         )}
       </div>
       {actions && (
-        <div className="flex flex-wrap items-center gap-2">{actions}</div>
+        <div className="page-intro-actions flex flex-wrap items-center gap-2">
+          {actions}
+        </div>
       )}
     </header>
   )
@@ -48,7 +50,7 @@ export function MetricCard({
   tone?: 'neutral' | 'available' | 'occupied' | 'revenue'
 }) {
   return (
-    <section className={cn('metric-card', `metric-card-${tone}`)}>
+    <section className={cn('metric-card surface-enter', `metric-card-${tone}`)}>
       <div className="flex items-center justify-between gap-3">
         <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground/75">
           {label}
@@ -81,7 +83,7 @@ export function SectionCard({
   className?: string
 }) {
   return (
-    <section className={cn('section-card', className)}>
+    <section className={cn('section-card surface-enter', className)}>
       <header className="flex items-start justify-between gap-4 border-b border-border px-4 py-3.5 sm:px-5">
         <div>
           <h2 className="text-[13px] font-bold tracking-[0.01em]">{title}</h2>

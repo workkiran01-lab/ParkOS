@@ -212,7 +212,7 @@
   }
 
   .sidebar-nav-link {
-    @apply flex h-10 items-center gap-3 rounded-md border-l-[3px] border-transparent px-3 text-[13px] font-medium text-sidebar-muted hover:bg-sidebar-foreground/[0.07] hover:text-sidebar-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-sidebar-ring;
+    @apply flex h-10 items-center gap-3 rounded-md border-l-[3px] border-transparent px-3 text-[13px] font-medium text-sidebar-muted hover:bg-sidebar-foreground/[0.07] hover:text-sidebar-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-sidebar-ring motion-safe:transition-[transform,background-color,color] motion-safe:duration-150 motion-safe:ease-out motion-safe:hover:translate-x-0.5;
   }
 
   .sidebar-nav-scroll {
@@ -239,7 +239,7 @@
   }
 
   .sidebar-footer-link {
-    @apply flex h-9 items-center gap-3 rounded-md px-2 text-xs text-sidebar-muted hover:bg-sidebar-foreground/6 hover:text-sidebar-foreground;
+    @apply flex h-9 items-center gap-3 rounded-md px-2 text-xs text-sidebar-muted hover:bg-sidebar-foreground/6 hover:text-sidebar-foreground motion-safe:transition-[transform,background-color,color] motion-safe:duration-150 motion-safe:ease-out motion-safe:hover:translate-x-0.5;
   }
 
   .sidebar-icon-button {
@@ -247,7 +247,7 @@
   }
 
   .command-icon-button {
-    @apply grid size-9 shrink-0 place-items-center rounded-md border border-border bg-card text-muted-foreground hover:border-foreground hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring;
+    @apply grid size-9 shrink-0 place-items-center rounded-md border border-border bg-card text-muted-foreground hover:border-foreground hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring motion-safe:transition-[transform,border-color,color] motion-safe:duration-150 motion-safe:ease-out motion-safe:hover:-translate-y-px;
   }
 
   .section-card {
@@ -256,6 +256,24 @@
 
   .metric-card {
     @apply min-w-0 overflow-hidden rounded-lg border border-border bg-card p-4;
+  }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .page-content {
+      animation: page-enter 220ms cubic-bezier(0.22, 1, 0.36, 1) both;
+    }
+
+    .page-intro {
+      animation: page-enter 240ms cubic-bezier(0.22, 1, 0.36, 1) both;
+    }
+
+    .page-intro-actions {
+      animation: page-enter 240ms cubic-bezier(0.22, 1, 0.36, 1) 40ms both;
+    }
+
+    .surface-enter {
+      animation: surface-enter 260ms cubic-bezier(0.22, 1, 0.36, 1) both;
+    }
   }
   .metric-card-available {
     border-left: 3px solid var(--status-available);
@@ -397,6 +415,28 @@
   }
   100% {
     background: var(--card);
+  }
+}
+
+@keyframes page-enter {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes surface-enter {
+  from {
+    opacity: 0;
+    transform: translateY(5px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
   }
 }
 
