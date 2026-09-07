@@ -166,7 +166,7 @@ select set_config('request.jwt.claims',
 create temporary table verifier_permit_revenue_results on commit drop as
 select 0 as seq,
        'CHECK0 July 2026 is otherwise empty, so the null-facility totals below are only fixtures'
-         as check,
+         as check_name,
        '0' as expected,
        (
          select pg_catalog.count(*)::text from public.payments p
@@ -313,7 +313,7 @@ declare
 begin
   select count(*),
          count(*) filter (where actual is distinct from expected),
-         string_agg(seq::text || ' ' || check || ': expected ' || expected
+         string_agg(seq::text || ' ' || check_name || ': expected ' || expected
                     || ', got ' || coalesce(actual, '(null)'), '; ' order by seq)
            filter (where actual is distinct from expected)
     into v_count, v_missing, v_failures
