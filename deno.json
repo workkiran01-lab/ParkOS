@@ -1,0 +1,5 @@
+{
+  "tasks": {
+    "check:edge": "deno check --frozen supabase/functions/create-checkout-session/index.ts supabase/functions/create-permit-subscription/index.ts supabase/functions/receipt-download/index.ts supabase/functions/refund-payment/index.ts supabase/functions/stripe-webhook/index.ts"
+  }
+}

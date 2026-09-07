@@ -33,8 +33,9 @@ export function stripeObjectId(value: unknown) {
   return null
 }
 
-export function metadataUuid(value: string | undefined) {
-  return isUuid(value ?? null) ? value : null
+export function metadataUuid(value: string | undefined): string | null {
+  const candidate = value ?? null
+  return isUuid(candidate) ? candidate : null
 }
 
 export function integerOrNull(value: number | null | undefined) {
