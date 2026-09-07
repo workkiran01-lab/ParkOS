@@ -184,6 +184,16 @@ first — this file tracks work, not architecture.
   `public_create_reservation` → `check_in_walk_in` for the return-type change (same pattern
   already handled once for booking_code generation itself). Not done now — deliberately kept out
   of a UI/design-pass task.
+- **Commit `d8c72ef` is titled "Typecheck Supabase Edge Functions in CI" but changes no CI.** It
+  added the Deno toolchain and the `typecheck:edge` npm script — `deno.json`, `deno.lock`,
+  `package.json`, `package-lock.json`, and `supabase/functions/_shared/stripe-payload.ts` — and
+  touched nothing under `.github/`. `.github/workflows/ci.yml` already existed by then (added in
+  `f0d8734`), so the title reads as though the step was wired into it there; it was not. The actual
+  `- run: npm run typecheck:edge` line landed two commits later in `8f57211` ("Run verification
+  suite in isolated local CI"). In between, edge typechecking was runnable locally but never ran in
+  CI. History is deliberately not rewritten, so this note stands in place of a corrected commit
+  message: read `d8c72ef` as "add edge typecheck tooling", and `8f57211` as the commit that put it
+  in CI.
 - **A correction retroactively rewrites past daily manifests, though not issued receipts.**
   `correct_reservation` updates the shared `customers`/`vehicles` rows by design, and since
   `20260907030000` every reservation it also changes carries its own
