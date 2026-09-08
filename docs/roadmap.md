@@ -15,18 +15,18 @@ first — this file tracks work, not architecture.
   - `public.record_permit_payment` —
     `supabase/migrations/20260829000000_permit_payments.sql:156` raises `PERMIT_NOT_FOUND`.
     Reached from `processPaidInvoice` in `supabase/functions/stripe-webhook/index.ts`, whose
-    200-ignored guard only catches an invoice carrying *no* ParkOS identifier. An invoice carrying
+    200-ignored guard only catches an invoice carrying _no_ ParkOS identifier. An invoice carrying
     a subscription id that is not ours — another product on the same platform Stripe account —
     resolves, misses, and raises.
   - `public.process_stripe_subscription_event` — current definition at
     `supabase/migrations/20260904000000_drop_dead_invoice_paid_branch.sql:96` raises
     `PERMIT_NOT_FOUND`. Reached from `processSubscriptionEvent` for `customer.subscription.*` and
     `invoice.payment_failed`, with the same guard and the same hole.
-  Each is the same one-line change as the fixed one plus a verifier case, but a different function
-  and a different blast radius, so neither was folded into a commit scoped to one bug. Their
-  `PERMIT_IDENTIFIER_REQUIRED` raises should *stay* raises, for the reason
-  `PAYMENT_IDENTIFIER_REQUIRED` did: being handed no identifier at all is a payload we do not
-  understand, not an event that belongs to somebody else.
+    Each is the same one-line change as the fixed one plus a verifier case, but a different function
+    and a different blast radius, so neither was folded into a commit scoped to one bug. Their
+    `PERMIT_IDENTIFIER_REQUIRED` raises should _stay_ raises, for the reason
+    `PAYMENT_IDENTIFIER_REQUIRED` did: being handed no identifier at all is a payload we do not
+    understand, not an event that belongs to somebody else.
 - **No reconciliation for a permit cancellation Stripe confirmed but no webhook completed.**
   Cancelling a Stripe-billed permit now calls Stripe first and lets
   `customer.subscription.deleted` write the cancellation, so a failed Stripe call leaves the
@@ -43,7 +43,7 @@ first — this file tracks work, not architecture.
   15-minute `parkos-permit-reconciliation` pg_cron job that logs a warning when it finds anything.
   Both are read-only on purpose. The two classifications that matter cannot be resolved from
   ParkOS state at all: `stuck_pending` is indistinguishable from a permit whose subscription
-  Stripe *did* create and whose `customer.subscription.created` was simply never delivered, and
+  Stripe _did_ create and whose `customer.subscription.created` was simply never delivered, and
   `suspended_unverified` is indistinguishable from a genuinely unpaid invoice or a terminal
   `incomplete_expired` subscription. Auto-abandoning the first would cancel a live, billing
   subscription. Remediation therefore needs `subscriptions.retrieve`, and it cannot live in the

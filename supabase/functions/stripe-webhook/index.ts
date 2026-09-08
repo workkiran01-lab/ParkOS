@@ -151,7 +151,8 @@ Deno.serve(async (request) => {
     // also the hand-off point, because a permit refund lands here: permit money
     // lives in permit_payments and its charge can never resolve above.
     if (
-      (result as Record<string, unknown> | null)?.outcome === 'payment_not_found'
+      (result as Record<string, unknown> | null)?.outcome ===
+      'payment_not_found'
     ) {
       if (normalized.eventType === 'charge.refunded')
         return await processPermitRefund(event, normalized)
@@ -296,9 +297,8 @@ async function processPermitRefund(
     )
   }
 
-  const result = data && typeof data === 'object'
-    ? (data as Record<string, unknown>)
-    : null
+  const result =
+    data && typeof data === 'object' ? (data as Record<string, unknown>) : null
   const outcome = result?.outcome
 
   // Both are deliberate 200s. 'permit_payment_not_found' is a charge belonging

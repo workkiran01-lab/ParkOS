@@ -37,30 +37,42 @@ Deno.serve(async (request) => {
   try {
     const body = await readJsonObject(request)
     const permitId = body ? readString(body.permit_id) : null
-    const action = body ? readString(body.action) ?? 'create' : 'create'
+    const action = body ? (readString(body.action) ?? 'create') : 'create'
     if (!isUuid(permitId)) return errorResponse('Choose a valid permit.', 400)
 
     const { userClient, adminClient } = await getAuthenticatedClients(request)
     const { data: permitData, error: permitError } = await userClient
       .from('permits')
-      .select('id, org_id, customer_id, monthly_rate_cents, currency, status, stripe_subscription_id')
+      .select(
+        'id, org_id, customer_id, monthly_rate_cents, currency, status, stripe_subscription_id',
+      )
       .eq('id', permitId)
       .maybeSingle()
 
     if (permitError || !permitData)
-      return errorResponse('Permit not found or unavailable.', permitError ? 500 : 404)
+      return errorResponse(
+        'Permit not found or unavailable.',
+        permitError ? 500 : 404,
+      )
 
     const permit = permitData as Permit
-    const { data: allowed, error: roleError } = await userClient.rpc('has_any_role', {
-      check_org_id: permit.org_id,
-      allowed_roles: ['admin', 'manager'],
-    })
-    if (roleError) return errorResponse('Permit permissions could not be verified.', 500)
+    const { data: allowed, error: roleError } = await userClient.rpc(
+      'has_any_role',
+      {
+        check_org_id: permit.org_id,
+        allowed_roles: ['admin', 'manager'],
+      },
+    )
+    if (roleError)
+      return errorResponse('Permit permissions could not be verified.', 500)
     if (allowed !== true)
       return errorResponse('An administrator or manager is required.', 403)
     if (action === 'cancel') {
       if (!permit.stripe_subscription_id)
-        return errorResponse('This permit has no Stripe subscription to cancel.', 409)
+        return errorResponse(
+          'This permit has no Stripe subscription to cancel.',
+          409,
+        )
 
       // Stripe's cancel is NOT idempotent. A canceled subscription is immutable
       // apart from metadata and cancellation_details, so a second cancel fails
@@ -70,7 +82,9 @@ Deno.serve(async (request) => {
       // Reporting that as an error would tell an operator billing is still
       // running when it has already stopped.
       const stripe = getStripeClient()
-      const existing = await stripe.subscriptions.retrieve(permit.stripe_subscription_id)
+      const existing = await stripe.subscriptions.retrieve(
+        permit.stripe_subscription_id,
+      )
       const alreadyCancelled = existing.status === 'canceled'
       if (!alreadyCancelled) {
         await stripe.subscriptions.cancel(permit.stripe_subscription_id, {
@@ -85,11 +99,14 @@ Deno.serve(async (request) => {
       // Stripe redelivers that event on failure. If the subscription was already
       // canceled and no webhook ever landed, the permit stays in the requested
       // state until reconciliation — see the roadmap entry.
-      return jsonResponse({
-        requested: true,
-        already_cancelled: alreadyCancelled,
-        message: 'Cancellation requested. Waiting for Stripe confirmation.',
-      }, 202)
+      return jsonResponse(
+        {
+          requested: true,
+          already_cancelled: alreadyCancelled,
+          message: 'Cancellation requested. Waiting for Stripe confirmation.',
+        },
+        202,
+      )
     }
     if (action === 'payment_link') {
       // Read-only: fetch the subscription's latest invoice so staff can hand the
@@ -102,10 +119,14 @@ Deno.serve(async (request) => {
       )
       return subscriptionResponse(subscription, true)
     }
-    if (action !== 'create') return errorResponse('Unsupported permit action.', 400)
+    if (action !== 'create')
+      return errorResponse('Unsupported permit action.', 400)
     if (permit.status === 'cancelled')
       return errorResponse('A cancelled permit cannot start billing.', 409)
-    if (!Number.isInteger(permit.monthly_rate_cents) || permit.monthly_rate_cents <= 0)
+    if (
+      !Number.isInteger(permit.monthly_rate_cents) ||
+      permit.monthly_rate_cents <= 0
+    )
       return errorResponse('The permit needs a positive monthly rate.', 422)
     if (!/^[A-Za-z]{3}$/.test(permit.currency))
       return errorResponse('The permit currency is invalid.', 422)
@@ -126,7 +147,10 @@ Deno.serve(async (request) => {
       .eq('org_id', permit.org_id)
       .maybeSingle()
     if (customerError || !customerData)
-      return errorResponse('The permit customer could not be loaded.', customerError ? 500 : 404)
+      return errorResponse(
+        'The permit customer could not be loaded.',
+        customerError ? 500 : 404,
+      )
 
     const customer = customerData as Customer
     let stripeCustomerId = customer.stripe_customer_id
@@ -169,8 +193,7 @@ Deno.serve(async (request) => {
         metadata,
       },
       {
-        idempotencyKey:
-          `parkos-permit-price:${permit.id}:${permit.monthly_rate_cents}:${permit.currency.toLowerCase()}`,
+        idempotencyKey: `parkos-permit-price:${permit.id}:${permit.monthly_rate_cents}:${permit.currency.toLowerCase()}`,
       },
     )
     const subscription = await stripe.subscriptions.create(
@@ -196,13 +219,18 @@ Deno.serve(async (request) => {
   }
 })
 
-function subscriptionResponse(subscription: Stripe.Subscription, reused: boolean) {
+function subscriptionResponse(
+  subscription: Stripe.Subscription,
+  reused: boolean,
+) {
   const invoice =
-    subscription.latest_invoice && typeof subscription.latest_invoice === 'object'
+    subscription.latest_invoice &&
+    typeof subscription.latest_invoice === 'object'
       ? (subscription.latest_invoice as unknown as Record<string, unknown>)
       : null
   const confirmationSecret =
-    invoice?.confirmation_secret && typeof invoice.confirmation_secret === 'object'
+    invoice?.confirmation_secret &&
+    typeof invoice.confirmation_secret === 'object'
       ? (invoice.confirmation_secret as Record<string, unknown>)
       : null
   const paymentUrl =
@@ -215,7 +243,10 @@ function subscriptionResponse(subscription: Stripe.Subscription, reused: boolean
       : null
 
   if (!paymentUrl && !clientSecret) {
-    return errorResponse('Stripe did not return a payment collection method.', 502)
+    return errorResponse(
+      'Stripe did not return a payment collection method.',
+      502,
+    )
   }
   return jsonResponse({
     subscription_id: subscription.id,

@@ -54,8 +54,9 @@ function MySettings() {
     const { data } = await supabase.rpc('get_my_permits')
     const rows = (data ?? []) as { status: string }[]
     setBilledPermits(
-      rows.filter((row) => row.status !== 'cancelled' && row.status !== 'pending')
-        .length,
+      rows.filter(
+        (row) => row.status !== 'cancelled' && row.status !== 'pending',
+      ).length,
     )
   }, [])
 

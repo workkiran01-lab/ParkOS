@@ -26,19 +26,26 @@ export type PermitCancelOutcome = {
   cancelled: boolean
 }
 
-export function permitCancelOutcome(attempt: PermitCancelAttempt): PermitCancelOutcome {
+export function permitCancelOutcome(
+  attempt: PermitCancelAttempt,
+): PermitCancelOutcome {
   if (!attempt.hasSubscription) {
     // No subscription means no billing to stop, so cancel_permit is the whole
     // operation and its result is final either way.
     return attempt.directFailed
-      ? { kind: 'error', message: 'The permit could not be cancelled.', cancelled: false }
+      ? {
+          kind: 'error',
+          message: 'The permit could not be cancelled.',
+          cancelled: false,
+        }
       : { kind: 'success', message: 'Permit cancelled', cancelled: true }
   }
 
   if (attempt.intentFailed) {
     return {
       kind: 'error',
-      message: 'The cancellation could not be started. The permit is unchanged.',
+      message:
+        'The cancellation could not be started. The permit is unchanged.',
       cancelled: false,
     }
   }
@@ -54,7 +61,8 @@ export function permitCancelOutcome(attempt: PermitCancelAttempt): PermitCancelO
 
   return {
     kind: 'success',
-    message: 'Cancellation requested — billing stopped. The permit closes when Stripe confirms.',
+    message:
+      'Cancellation requested — billing stopped. The permit closes when Stripe confirms.',
     cancelled: false,
   }
 }

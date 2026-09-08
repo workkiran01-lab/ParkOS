@@ -191,7 +191,7 @@ recorder.
 Both events are subscribed because only `invoice.paid` fires when an invoice is marked paid
 **out of band** — a wire, a cheque, cash handed over. `invoice.payment_succeeded` is never sent for
 those, so before this they collected money and recorded nothing, raising no error: the same silent
-shape as the Basil `paid` removal. Stripe recommends listening to `invoice.paid` *instead of*
+shape as the Basil `paid` removal. Stripe recommends listening to `invoice.paid` _instead of_
 `invoice.payment_succeeded`; ParkOS deliberately keeps both, because nothing in this repository can
 see which events the Dashboard endpoint subscribes to (see "Stripe API version pinning") and
 dropping `payment_succeeded` against an endpoint that does not send `invoice.paid` would silently
@@ -200,7 +200,7 @@ stop all permit revenue. Subscribing to both fails safe in the other direction.
 That makes double delivery routine rather than exceptional: a normal payment arrives on **both**
 events, carrying identical invoice data under **different** event ids. Idempotency exists at two
 levels and the second one is what carries this case: `processed_stripe_events.event_id` collapses
-ordinary webhook retries but *cannot* collapse two distinct events, and unique
+ordinary webhook retries but _cannot_ collapse two distinct events, and unique
 `permit_payments.stripe_invoice_id` prevents a resent invoice under a different event id from
 becoming duplicate revenue. The second delivery returns `duplicate_invoice` and writes neither a
 payment row nor an audit entry. Concurrent delivery of the two events serializes on the permit's
