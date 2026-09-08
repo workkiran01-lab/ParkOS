@@ -14,6 +14,7 @@
     "test:db": "node scripts/run-sql-verifiers.mjs --tier database",
     "test:financial": "node scripts/run-sql-verifiers.mjs --tier financial",
     "test:concurrency": "node scripts/concurrency-test.mjs",
+    "test:correction-race": "node scripts/correction-race-test.mjs",
     "check:local-db": "node scripts/local-database.mjs",
     "db:seed:dev": "node scripts/run-sql-verifiers.mjs --seed",
     "test:acl": "node scripts/run-sql-verifiers.mjs --file supabase/dev-only/verify_no_anon_execute.sql",
