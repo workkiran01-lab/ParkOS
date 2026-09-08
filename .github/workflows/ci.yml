@@ -52,7 +52,8 @@ jobs:
       - run: npm run check:local-db
       - run: npx supabase start --exclude studio,imgproxy,mailpit,vector,logflare
       - run: npx supabase db reset --local
-      - run: npx supabase status -o env >> "$GITHUB_ENV"
+      # supabase status -o env shell-quotes every value; GITHUB_ENV keeps the quotes literally
+      - run: npx supabase status -o env | sed 's/="\(.*\)"$/=\1/' >> "$GITHUB_ENV"
       - run: npm run db:seed:dev
       - run: npm run test:db
       - run: npm run test:concurrency
@@ -74,7 +75,8 @@ jobs:
       - run: npm run check:local-db
       - run: npx supabase start --exclude studio,imgproxy,mailpit,vector,logflare
       - run: npx supabase db reset --local
-      - run: npx supabase status -o env >> "$GITHUB_ENV"
+      # supabase status -o env shell-quotes every value; GITHUB_ENV keeps the quotes literally
+      - run: npx supabase status -o env | sed 's/="\(.*\)"$/=\1/' >> "$GITHUB_ENV"
       - run: npm run db:seed:dev
       - run: npm run test:financial
       - if: always()
