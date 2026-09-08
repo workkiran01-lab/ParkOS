@@ -68,37 +68,35 @@ function runFile(databaseUrl, file) {
   if (!existsSync(absoluteFile))
     throw new Error(`SQL verifier is missing: ${file}`)
 
-  const supabaseCli = resolve(
-    projectRoot,
-    'node_modules',
-    'supabase',
-    'dist',
-    'supabase.js',
-  )
-  if (!existsSync(supabaseCli)) {
-    throw new Error(
-      'Supabase CLI is missing. Run npm ci before database verification.',
-    )
-  }
-
   console.log(
     `Running ${relative(projectRoot, absoluteFile).replaceAll('\\', '/')}...`,
   )
+  // `supabase db query --file` sends the whole file as one prepared statement,
+  // and PostgreSQL rejects that with "cannot insert multiple commands into a
+  // prepared statement". Every file here is multi-statement, so none of them
+  // could ever run. psql executes a script file with the simple query protocol,
+  // which is what a multi-statement file requires; ON_ERROR_STOP makes the first
+  // failed statement exit non-zero instead of continuing through the file.
   const result = spawnSync(
-    process.execPath,
+    'psql',
     [
-      supabaseCli,
-      'db',
-      'query',
-      '--db-url',
-      databaseUrl,
+      '--variable=ON_ERROR_STOP=1',
+      '--no-psqlrc',
       '--file',
       absoluteFile,
+      databaseUrl,
     ],
     { cwd: projectRoot, stdio: 'inherit' },
   )
 
-  if (result.error) throw result.error
+  if (result.error) {
+    if (result.error.code === 'ENOENT') {
+      throw new Error(
+        'psql is required to run multi-statement SQL files. Install the PostgreSQL client tools (postgresql-client).',
+      )
+    }
+    throw result.error
+  }
   if (result.status !== 0) {
     throw new Error(
       `${file} failed with exit code ${result.status ?? 'unknown'}.`,
