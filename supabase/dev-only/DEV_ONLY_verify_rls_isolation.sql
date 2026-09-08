@@ -15,6 +15,7 @@ begin;
 -- ---------------------------------------------------------------------------
 do $$
 declare v int;
+        v_definers int;
 begin
   select count(*) into v from pg_tables
    where schemaname = 'public' and rowsecurity
@@ -43,28 +44,53 @@ begin
     raise exception 'CHECK0 FAIL: expected 61 policies, found %', v;
   end if;
 
+  -- DERIVED FROM THE CATALOG, NEVER ENUMERATED. This assertion used to be a
+  -- hand-maintained list of 25 function names with a literal count. Nothing
+  -- updated it when a definer function was added, so it silently drifted 11
+  -- functions behind (abandon_pending_permit, calculate_overstay,
+  -- correct_reservation, deactivate_account, generate_booking_code,
+  -- is_account_deactivated, record_booth_payment, record_permit_payment,
+  -- request_permit_cancellation, reservation_balance_cents,
+  -- reservation_correction_scope) while still reporting PASS -- including two
+  -- money writers and two functions this branch itself added.
+  --
+  -- Per-function coverage is asserted exhaustively, from the catalog, by
+  -- DEV_ONLY_verify_privileged_functions.sql: a new definer function with no
+  -- coverage row fails it, and a coverage row naming no deployed function fails
+  -- it too. Re-listing names here only created a second list to fall behind.
+  --
+  -- What this check owns instead is the RLS-relevant invariant, derived: a
+  -- SECURITY DEFINER function that does not pin an empty search_path resolves
+  -- names against a caller-influenced search_path while holding the owner's
+  -- privileges, which defeats every policy this file goes on to verify. A new
+  -- definer function is covered the moment it is created, with no list to
+  -- maintain.
   select count(*) into v
     from pg_proc p join pg_namespace n on n.oid = p.pronamespace
    where n.nspname = 'public'
-     and p.proname in ('get_user_role','has_any_role',
-                       'create_organization_with_admin','accept_invite',
-                       'create_facility_with_zones_and_spaces',
-                       'get_public_facility','get_public_availability',
-                       'public_quote_reservation','public_ensure_customer',
-                       'public_create_reservation',
-                       'cancel_reservation','extend_reservation',
-                       'confirm_reservation','mark_no_shows','get_my_reservations',
-                       'process_stripe_event',
-                       'check_in_reservation','check_in_walk_in','check_out_reservation',
-                       'issue_permit','cancel_permit','get_my_permits',
-                       'process_stripe_subscription_event',
-                       -- +2 for the refund ledgers: both write money and both
-                       -- must stay SECURITY DEFINER, since neither table grants
-                       -- UPDATE to authenticated.
-                       'refund_booth_payment','record_permit_refund')
-      and p.prosecdef;
-  if v <> 25 then
-    raise exception 'CHECK0 FAIL: helper functions missing or not SECURITY DEFINER (found %)', v;
+     and p.prokind = 'f'
+     and p.prosecdef
+     and pg_catalog.pg_get_userbyid(p.proowner) = 'postgres'
+     -- `is not true`, NOT `not (...)`: proconfig is NULL for a function with no
+     -- SET at all -- the worst case -- and `not (NULL @> ...)` is NULL, which a
+     -- WHERE clause discards. Written the obvious way, this check can only see a
+     -- WRONG search_path and never a MISSING one.
+     and (p.proconfig @> array['search_path=""']) is not true;
+  if v <> 0 then
+    raise exception 'CHECK0 FAIL: % SECURITY DEFINER function(s) in public do not pin an empty search_path', v;
+  end if;
+
+  -- Floor, not an equality: this is the "migrations landed" smoke test, and an
+  -- exact literal is the very thing that went stale. Growth is expected and is
+  -- policed per-function by the privileged-function verifier.
+  select count(*) into v_definers
+    from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+   where n.nspname = 'public'
+     and p.prokind = 'f'
+     and p.prosecdef
+     and pg_catalog.pg_get_userbyid(p.proowner) = 'postgres';
+  if v_definers < 25 then
+    raise exception 'CHECK0 FAIL: only % SECURITY DEFINER functions in public -- migrations did not land', v_definers;
   end if;
 
   -- is_own_customer must stay SECURITY INVOKER: it is safe from recursion only
@@ -75,7 +101,7 @@ begin
   if v <> 1 then
     raise exception 'CHECK0 FAIL: is_own_customer missing or wrongly SECURITY DEFINER';
   end if;
-  raise notice 'CHECK0 PASS: 21 RLS tables, 61 policies, 25 SECURITY DEFINER functions';
+  raise notice 'CHECK0 PASS: 21 RLS tables, 61 policies, % SECURITY DEFINER functions all pinning search_path', v_definers;
 end $$;
 
 -- ---------------------------------------------------------------------------

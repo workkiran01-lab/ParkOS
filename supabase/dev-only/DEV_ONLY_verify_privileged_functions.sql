@@ -129,10 +129,15 @@ begin
     raise exception 'SECURITY DEFINER coverage names no deployed function: %', v_stale;
   end if;
 
+  -- `is not true`, NOT `not (...)`: proconfig is NULL for a function that pins
+  -- nothing at all, and `not (NULL @> ...)` is NULL, which this WHERE discards.
+  -- Written the obvious way this clause could only ever catch a function with a
+  -- WRONG search_path, never one with NO search_path -- the case that actually
+  -- lets a definer function resolve names as the caller chooses.
   select string_agg(proname, ', ' order by proname)
     into v_unpinned
     from verifier_privileged_catalog
-   where not (proconfig @> array['search_path=""']);
+   where (proconfig @> array['search_path=""']) is not true;
   if v_unpinned is not null then
     raise exception 'SECURITY DEFINER function lacks pinned empty search_path: %', v_unpinned;
   end if;
