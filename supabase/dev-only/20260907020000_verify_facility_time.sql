@@ -53,7 +53,10 @@ begin
         v_facility, timestamp '2026-03-08 02:30'
       );
       raise exception 'TIME FAIL: spring-forward nonexistent time was accepted';
-    exception when sqlstate '22007' then
+    -- 22023 invalid_parameter_value, not 22007: 22007 is PostgreSQL's own
+    -- "could not parse that as a datetime", and catching it here would also
+    -- swallow a genuine parse failure raised from inside the function.
+    exception when sqlstate '22023' then
       if sqlerrm <> 'NONEXISTENT_FACILITY_LOCAL_TIME' then raise; end if;
     end;
 
@@ -172,7 +175,10 @@ begin
         timestamp '2028-02-15 11:00' at time zone 'America/Los_Angeles'
       );
       raise exception 'TIME FAIL: authoritative reservation creation ignored closure';
-    exception when sqlstate '22007' then
+    -- P0001, the code every other ParkOS policy refusal uses. A 22007 escaping
+    -- this block now means the facility's operating_hours are unparseable, which
+    -- is a different problem and must not be reported as a closed lot.
+    exception when sqlstate 'P0001' then
       if sqlerrm <> 'OUTSIDE_OPERATING_HOURS' then raise; end if;
     end;
 
