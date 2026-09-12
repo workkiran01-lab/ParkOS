@@ -6,6 +6,32 @@ first — this file tracks work, not architecture.
 
 ## Known gaps (should resolve before real launch)
 
+- **A direct-SQL staff session can switch the operating-hours gate off for scheduled bookings.**
+  `20260909000000_exempt_walk_in_from_operating_hours.sql` exempts walk-in check-in with a
+  transaction-scoped GUC: `public.check_in_walk_in` runs
+  `pg_catalog.set_config('parkos.walk_in_checkin', 'on', true)` around its own insert
+  (`supabase/migrations/20260909000000_exempt_walk_in_from_operating_hours.sql:91`) and
+  `public.enforce_reservation_operating_hours` returns early when it reads `'on'` (same file,
+  line 31). The trigger being short-circuited is `reservations_operating_hours`,
+  `before insert or update of facility_id, during on public.reservations`
+  (`supabase/migrations/20260907000000_staff_reservation_creation.sql:131`).
+  An API client cannot forge the flag, and that half of the migration's reasoning holds: PostgREST
+  sets only `request.*` GUCs from a request and exposes no function taking a GUC name. A session
+  with direct SQL can — `select set_config('parkos.walk_in_checkin', 'on', true)` followed by an
+  ordinary `insert into public.reservations` lands a _scheduled_ booking outside posted hours with
+  no `OUTSIDE_OPERATING_HOURS`.
+  The migration dismisses this as "such a caller can already write `public.reservations`
+  directly", which understates it. `authenticated` does hold INSERT on `reservations` (CHECK 0b,
+  `supabase/dev-only/DEV_ONLY_verify_rls_isolation.sql:206`), but `reservations_operating_hours`
+  is a BEFORE INSERT trigger and fires on a direct insert too, so before this migration a
+  direct-SQL staff session was still gated on the window. The flag is a bypass that caller did not
+  previously have, not one it already had. RLS and the `space_holds` exclusion constraint are
+  untouched, so the reachable effect is a booking recorded outside posted hours -- not
+  cross-tenant access and not a double book.
+  Recorded, not fixed. Narrowing the flag does not close it: any signal `check_in_walk_in` can set
+  in its own session, a direct-SQL caller in that session can set too. What would help is making a
+  future widening visible -- a verifier case asserting that a scheduled write still raises
+  `OUTSIDE_OPERATING_HOURS` when the session has pre-set `parkos.walk_in_checkin`.
 - **The same miss-and-500 shape is still live in both permit webhook functions.**
   `20260905000000_stripe_event_unresolved_payment.sql` fixed it in `process_stripe_event` only:
   a charge that resolves to nothing now returns `{processed: false, outcome: 'payment_not_found'}`
