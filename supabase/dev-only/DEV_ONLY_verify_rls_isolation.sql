@@ -502,7 +502,7 @@ declare
   v_rule uuid;
   v_reservation uuid;
   v_b_space_ids uuid[];
-  v_start timestamptz := date_trunc('hour', now()) + interval '200 days';
+  v_start timestamptz;
 begin
   -- setup as postgres
   insert into auth.users
@@ -530,6 +530,22 @@ begin
    where f.org_id = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb'
      and f.archived_at is null
    order by f.name limit 1;
+
+  -- Deterministic at any time of day. This was
+  -- date_trunc('hour', now()) + interval '200 days', which inherited the local
+  -- time-of-day of whenever the suite happened to run. Org B's facility is open
+  -- 08:00-20:00, so for 13 hours out of every 24 the window fell outside its
+  -- posted hours, get_public_availability correctly returned nothing, and the
+  -- non-degenerate assertion below failed on the clock rather than on isolation.
+  -- Pin the wall time to 10:00 on the facility's OWN clock -- read from the row,
+  -- not hardcoded, so it stays correct if the seed timezone changes -- and keep
+  -- the far-future offset that avoids colliding with seeded fixtures. 10:00 is
+  -- never inside a DST spring-forward gap.
+  select (date_trunc('day', (now() at time zone f.timezone))
+            + interval '200 days 10 hours') at time zone f.timezone
+    into v_start
+    from public.facilities f
+   where f.id = v_facility_b;
 
   -- a space in facility A with no unreleased holds at all
   select s.id into v_space
@@ -655,7 +671,12 @@ declare
   v_space uuid;
   v_rule uuid;
   v_res uuid;
-  v_start timestamptz := date_trunc('hour', now()) + interval '300 days';
+  -- Pinned like the others. This block confines itself to Org A's first
+  -- facility by name, which the seed makes Lot A (24_hours), so it is safe
+  -- today -- but only by accident of that facility's hours, so it is pinned
+  -- too rather than left as the one now()-relative window in the file.
+  v_start timestamptz := (date_trunc('day', now() at time zone 'America/Los_Angeles')
+                          + interval '300 days 10 hours') at time zone 'America/Los_Angeles';
 begin
   insert into auth.users
     (instance_id, id, aud, role, email, encrypted_password,
@@ -799,7 +820,14 @@ declare
   v_payment1 uuid;
   v_payment2 uuid;
   v_result jsonb;
-  v_start timestamptz := date_trunc('hour', now()) + interval '600 days';
+  -- Pinned to 10:00 on the facility clock, not the run's time-of-day: see the
+  -- note in CHECK 7. The space below can land in a facility with posted hours,
+  -- and the reservations operating-hours trigger fires on this insert, so a
+  -- now()-relative window failed whenever the suite ran outside them. Every
+  -- seeded facility is America/Los_Angeles and the narrowest posted window is
+  -- 08:00-20:00, so 10:00 is inside all of them.
+  v_start timestamptz := (date_trunc('day', now() at time zone 'America/Los_Angeles')
+                          + interval '600 days 10 hours') at time zone 'America/Los_Angeles';
 begin
   insert into auth.users
     (instance_id, id, aud, role, email, encrypted_password,
@@ -1043,9 +1071,17 @@ declare
   v_res_a uuid;  v_res_b uuid;
   v_photo_a uuid; v_photo_b uuid;
   name_a text; name_b text;
+  -- Pinned to 10:00 on the facility clock, not the run's time-of-day: see the
+  -- note in CHECK 7. The space below can land in a facility with posted hours,
+  -- and the reservations operating-hours trigger fires on this insert, so a
+  -- now()-relative window failed whenever the suite ran outside them. Every
+  -- seeded facility is America/Los_Angeles and the narrowest posted window is
+  -- 08:00-20:00, so 10:00 is inside all of them.
   v_win tstzrange := tstzrange(
-    date_trunc('hour', now()) + interval '400 days',
-    date_trunc('hour', now()) + interval '400 days 1 hour', '[)');
+    (date_trunc('day', now() at time zone 'America/Los_Angeles')
+       + interval '400 days 10 hours') at time zone 'America/Los_Angeles',
+    (date_trunc('day', now() at time zone 'America/Los_Angeles')
+       + interval '400 days 11 hours') at time zone 'America/Los_Angeles', '[)');
 begin
   begin  -- subtransaction: everything below is rolled back before we return
     select z.facility_id, s.id into v_fac_a, v_space_a
@@ -1176,7 +1212,14 @@ declare
   v_facility uuid;
   v_space uuid;
   v_permit uuid;
-  v_start timestamptz := date_trunc('hour', now()) + interval '900 days';
+  -- Pinned to 10:00 on the facility clock, not the run's time-of-day: see the
+  -- note in CHECK 7. The space below can land in a facility with posted hours,
+  -- and the reservations operating-hours trigger fires on this insert, so a
+  -- now()-relative window failed whenever the suite ran outside them. Every
+  -- seeded facility is America/Los_Angeles and the narrowest posted window is
+  -- 08:00-20:00, so 10:00 is inside all of them.
+  v_start timestamptz := (date_trunc('day', now() at time zone 'America/Los_Angeles')
+                          + interval '900 days 10 hours') at time zone 'America/Los_Angeles';
 begin
   begin
     insert into auth.users
@@ -1305,7 +1348,7 @@ rollback;
 -- completes, return an explicit, machine-visible summary for CI/manual evidence.
 select check_name, result
 from (values
-  ('CHECK0',  'PASS: 21 RLS tables, 61 policies, 25 SECURITY DEFINER functions'),
+  ('CHECK0',  'PASS: 21 RLS tables, 61 policies, all definers pin search_path'),
   ('CHECK0b', 'PASS: authenticated has normal DML grants; permits is SELECT-only'),
   ('CHECK0c', 'PASS: payment writes and Stripe event processing are service-role-only'),
   ('CHECK1',  'PASS: Org A sees exactly 2 facilities / 165 spaces, all Org A'),
