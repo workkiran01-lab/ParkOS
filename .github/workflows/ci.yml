@@ -32,7 +32,22 @@ jobs:
       - run: npm run format:check
       - run: npm run lint
       - run: npm run typecheck
-      - run: npm run typecheck:edge
+      # Reading a job log needs repo auth; the job summary is served by the
+      # public check-runs API. This step has failed in under a second on every
+      # run since it was introduced and the reason has never been visible, so
+      # mirror its output somewhere readable. The exit code is preserved.
+      - name: Typecheck edge functions
+        shell: bash
+        run: |
+          set +e
+          out=$(npm run typecheck:edge 2>&1)
+          rc=$?
+          {
+            printf '## typecheck:edge exit %s\n\n' "$rc"
+            printf '```\n%s\n```\n' "$out"
+          } >> "$GITHUB_STEP_SUMMARY"
+          printf '%s\n' "$out"
+          exit $rc
       - run: npm test
       - run: npm run build
       - run: git diff --exit-code -- src/routeTree.gen.ts
@@ -52,12 +67,35 @@ jobs:
       - run: npm run check:local-db
       - run: npx supabase start --exclude studio,imgproxy,mailpit,vector,logflare
       - run: npx supabase db reset --local
-      # supabase status -o env shell-quotes every value; GITHUB_ENV keeps the quotes literally
-      - run: npx supabase status -o env | sed 's/="\(.*\)"$/=\1/' >> "$GITHUB_ENV"
+      # supabase status -o env shell-quotes every value; GITHUB_ENV keeps the
+      # quotes literally. shell: bash is load-bearing: the default shell is
+      # `bash -e` with no pipefail, so this pipe reported sed's exit status and
+      # a failing `supabase status` appended nothing while still going green.
+      # Only test:concurrency, the first consumer of API_URL, ever noticed.
+      # Key names go to the summary; the values include the service-role key.
+      - name: Export local Supabase env
+        shell: bash
+        run: |
+          npx supabase status -o env \
+            | sed 's/="\(.*\)"$/=\1/' > "$RUNNER_TEMP/supabase.env"
+          printf '## supabase status keys\n\n```\n%s\n```\n' \
+            "$(cut -d= -f1 "$RUNNER_TEMP/supabase.env")" >> "$GITHUB_STEP_SUMMARY"
+          cat "$RUNNER_TEMP/supabase.env" >> "$GITHUB_ENV"
       - run: npm run db:seed:dev
       - run: npm run test:db
       - run: npm run test:correction-race
-      - run: npm run test:concurrency
+      - name: Concurrency test
+        shell: bash
+        run: |
+          set +e
+          out=$(npm run test:concurrency 2>&1)
+          rc=$?
+          {
+            printf '## test:concurrency exit %s\n\n' "$rc"
+            printf '```\n%s\n```\n' "$out"
+          } >> "$GITHUB_STEP_SUMMARY"
+          printf '%s\n' "$out"
+          exit $rc
       - if: always()
         run: npx supabase stop --no-backup
 
@@ -76,8 +114,12 @@ jobs:
       - run: npm run check:local-db
       - run: npx supabase start --exclude studio,imgproxy,mailpit,vector,logflare
       - run: npx supabase db reset --local
-      # supabase status -o env shell-quotes every value; GITHUB_ENV keeps the quotes literally
-      - run: npx supabase status -o env | sed 's/="\(.*\)"$/=\1/' >> "$GITHUB_ENV"
+      # See the database job: shell: bash supplies the missing pipefail.
+      - name: Export local Supabase env
+        shell: bash
+        run: |
+          npx supabase status -o env \
+            | sed 's/="\(.*\)"$/=\1/' >> "$GITHUB_ENV"
       - run: npm run db:seed:dev
       - run: npm run test:financial
       - if: always()
