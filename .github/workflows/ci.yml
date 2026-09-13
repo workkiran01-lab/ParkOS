@@ -32,21 +32,21 @@ jobs:
       - run: npm run format:check
       - run: npm run lint
       - run: npm run typecheck
-      # Reading a job log needs repo auth; the job summary is served by the
-      # public check-runs API. This step has failed in under a second on every
-      # run since it was introduced and the reason has never been visible, so
-      # mirror its output somewhere readable. The exit code is preserved.
+      # Reading a job log needs repo auth; annotations are served by the public
+      # check-runs API. This step has failed in under a second on every run
+      # since it was introduced and the reason has never been visible off the
+      # runner, so re-emit its output as an annotation. Exit code preserved.
       - name: Typecheck edge functions
         shell: bash
         run: |
           set +e
           out=$(npm run typecheck:edge 2>&1)
           rc=$?
-          {
-            printf '## typecheck:edge exit %s\n\n' "$rc"
-            printf '```\n%s\n```\n' "$out"
-          } >> "$GITHUB_STEP_SUMMARY"
           printf '%s\n' "$out"
+          if [ $rc -ne 0 ]; then
+            enc=$(printf '%s' "$out" | tail -c 3000 | sed -e 's/%/%25/g' -e 's/\r//g' | awk '{printf "%s%%0A", $0}')
+            echo "::error title=typecheck:edge exit $rc::$enc"
+          fi
           exit $rc
       - run: npm test
       - run: npm run build
@@ -70,16 +70,15 @@ jobs:
       # supabase status -o env shell-quotes every value; GITHUB_ENV keeps the
       # quotes literally. shell: bash is load-bearing: the default shell is
       # `bash -e` with no pipefail, so this pipe reported sed's exit status and
-      # a failing `supabase status` appended nothing while still going green.
-      # Only test:concurrency, the first consumer of API_URL, ever noticed.
-      # Key names go to the summary; the values include the service-role key.
+      # a failing `supabase status` would append nothing while still going
+      # green. Only test:concurrency, the first reader of API_URL, would notice.
+      # Key names are annotated; the values include the service-role key.
       - name: Export local Supabase env
         shell: bash
         run: |
           npx supabase status -o env \
             | sed 's/="\(.*\)"$/=\1/' > "$RUNNER_TEMP/supabase.env"
-          printf '## supabase status keys\n\n```\n%s\n```\n' \
-            "$(cut -d= -f1 "$RUNNER_TEMP/supabase.env")" >> "$GITHUB_STEP_SUMMARY"
+          echo "::notice title=supabase status keys::$(cut -d= -f1 "$RUNNER_TEMP/supabase.env" | tr '\n' ' ')"
           cat "$RUNNER_TEMP/supabase.env" >> "$GITHUB_ENV"
       - run: npm run db:seed:dev
       - run: npm run test:db
@@ -90,11 +89,11 @@ jobs:
           set +e
           out=$(npm run test:concurrency 2>&1)
           rc=$?
-          {
-            printf '## test:concurrency exit %s\n\n' "$rc"
-            printf '```\n%s\n```\n' "$out"
-          } >> "$GITHUB_STEP_SUMMARY"
           printf '%s\n' "$out"
+          if [ $rc -ne 0 ]; then
+            enc=$(printf '%s' "$out" | tail -c 3000 | sed -e 's/%/%25/g' -e 's/\r//g' | awk '{printf "%s%%0A", $0}')
+            echo "::error title=test:concurrency exit $rc::$enc"
+          fi
           exit $rc
       - if: always()
         run: npx supabase stop --no-backup
