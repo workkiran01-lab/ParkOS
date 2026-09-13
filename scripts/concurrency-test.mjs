@@ -8,8 +8,15 @@ const SUPABASE_URL = assertLoopbackHttpUrl(
   process.env.PARKOS_TEST_SUPABASE_URL ?? process.env.API_URL,
   'PARKOS_TEST_SUPABASE_URL or API_URL',
 )
+// supabase status -o env emits both key generations. On CLI 2.116 the legacy
+// SERVICE_ROLE_KEY is not the credential PostgREST honours -- presenting it
+// silently downgrades the request to anon, which surfaces here as
+// "permission denied for table spaces" rather than as an auth error. Prefer
+// the new-format SECRET_KEY and keep the legacy name as a fallback.
 const SERVICE_ROLE_KEY =
-  process.env.PARKOS_TEST_SERVICE_ROLE_KEY ?? process.env.SERVICE_ROLE_KEY
+  process.env.PARKOS_TEST_SERVICE_ROLE_KEY ??
+  process.env.SECRET_KEY ??
+  process.env.SERVICE_ROLE_KEY
 
 const TEST_ORG_ID = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
 const TEST_FACILITY_ID = '11111111-1111-1111-1111-111111111111'
@@ -21,7 +28,7 @@ const TEST_END = '2030-01-15T20:00:00.000Z'
 
 if (!SERVICE_ROLE_KEY) {
   throw new Error(
-    'PARKOS_TEST_SERVICE_ROLE_KEY or SERVICE_ROLE_KEY is required for the local concurrency test.',
+    'PARKOS_TEST_SERVICE_ROLE_KEY, SECRET_KEY or SERVICE_ROLE_KEY is required for the local concurrency test.',
   )
 }
 

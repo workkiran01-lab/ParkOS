@@ -36,6 +36,7 @@
         "npm:react@^19.2.8",
         "npm:shadcn@^4.18.0",
         "npm:sonner@^2.0.8",
+        "npm:stripe@22.6.0",
         "npm:supabase@^2.115.0",
         "npm:tailwind-merge@^3.6.0",
         "npm:tailwindcss@^4.3.3",
