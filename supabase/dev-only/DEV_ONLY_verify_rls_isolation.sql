@@ -1342,6 +1342,64 @@ begin
   raise notice 'CHECK12 PASS: permit roles/RLS isolated; active permit blocks reservations; cancel releases hold';
 end $$;
 
+-- CHECK13: last ACTIVE admin is protected at the table boundary, including
+-- writes through other RPCs. Positive controls permit non-last removal.
+do $$
+declare
+  v_admin uuid := '00000000-0000-0000-0000-0000000000a1';
+  v_other uuid := '00000000-0000-0000-0000-0000000000a2';
+  v_org uuid := 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+  v_sql text;
+begin
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000a1","role":"authenticated"}', true);
+  perform set_config('request.jwt.claim.sub', v_admin::text, true);
+  set local role authenticated;
+  foreach v_sql in array array[
+    format('delete from public.memberships where org_id = %L and user_id = %L', v_org, v_admin),
+    format('update public.memberships set role = ''manager'' where org_id = %L and user_id = %L', v_org, v_admin)
+  ] loop
+    begin
+      execute v_sql;
+      raise exception 'CHECK13 FAIL: last admin membership removal/demotion succeeded';
+    exception when check_violation then
+      if sqlerrm <> 'LAST_ACTIVE_ADMIN_REQUIRED' then raise; end if;
+    end;
+  end loop;
+  reset role;
+
+  -- Privileged callers and auth-user cascades must obey the same invariant.
+  foreach v_sql in array array[
+    format('update public.memberships set org_id = ''bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb'' where org_id = %L and user_id = %L', v_org, v_admin),
+    format('delete from auth.users where id = %L', v_admin),
+    format('insert into public.account_status(user_id,status) values (%L,''deactivated'')', v_admin)
+  ] loop
+    begin
+      execute v_sql;
+      raise exception 'CHECK13 FAIL: reassignment/deletion/deactivation removed the last active admin';
+    exception when check_violation then
+      if sqlerrm <> 'LAST_ACTIVE_ADMIN_REQUIRED' then raise; end if;
+    end;
+  end loop;
+
+  update public.memberships set role = 'admin' where org_id = v_org and user_id = v_other;
+  -- An unusable second admin is not a recovery path.
+  insert into public.account_status(user_id,status) values (v_other,'deactivated');
+  begin
+    delete from public.memberships where org_id = v_org and user_id = v_admin;
+    raise exception 'CHECK13 FAIL: a deactivated admin was counted as a usable replacement';
+  exception when check_violation then
+    if sqlerrm <> 'LAST_ACTIVE_ADMIN_REQUIRED' then raise; end if;
+  end;
+  delete from public.account_status where user_id = v_other;
+  delete from public.memberships where org_id = v_org and user_id = v_admin;
+  if not found then raise exception 'CHECK13 FAIL: non-last admin was not removed'; end if;
+  if (select count(*) from public.memberships where org_id = v_org and role = 'admin') <> 1 then
+    raise exception 'CHECK13 FAIL: expected one remaining admin';
+  end if;
+  raise notice 'CHECK13 PASS: last active admin protected; non-last admin removal allowed';
+end $$;
+
 rollback;
 
 -- The Management API suppresses RAISE NOTICE output. If every assertion above
@@ -1362,6 +1420,7 @@ from (values
   ('CHECK8',  'PASS: cross-customer cancel/extend denied; attendant override works; audit_log unforgeable'),
   ('CHECK9',  'PASS: payments isolated/read-only; webhook service role atomic and idempotent'),
   ('CHECK10', 'PASS: cross-org check-in/out denied; vehicle_photos + storage objects org-scoped'),
-  ('CHECK12', 'PASS: permit roles/RLS isolated; active permit blocks reservations; cancel releases hold')
+  ('CHECK12', 'PASS: permit roles/RLS isolated; active permit blocks reservations; cancel releases hold'),
+  ('CHECK13', 'PASS: last active admin protected; non-last admin removal allowed')
 ) as checks(check_name, result)
 order by check_name;

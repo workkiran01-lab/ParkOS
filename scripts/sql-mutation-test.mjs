@@ -10,6 +10,23 @@ const invoiceVerifier =
   'supabase/dev-only/20260903000000_verify_invoice_paid.sql'
 const cases = [
   {
+    name: 'Last admin rejects removed membership safeguard',
+    scriptPattern: 'begin;',
+    scriptReplacement:
+      'begin;\nalter table public.memberships disable trigger memberships_preserve_last_admin;',
+    verifier: 'supabase/dev-only/DEV_ONLY_verify_rls_isolation.sql',
+    witness: 'CHECK13 FAIL: last admin membership removal/demotion succeeded',
+  },
+  {
+    name: 'Last admin rejects removed deactivation safeguard',
+    scriptPattern: 'begin;',
+    scriptReplacement:
+      'begin;\nalter table public.account_status disable trigger account_status_preserve_last_admin;',
+    verifier: 'supabase/dev-only/DEV_ONLY_verify_rls_isolation.sql',
+    witness:
+      'CHECK13 FAIL: reassignment/deletion/deactivation removed the last active admin',
+  },
+  {
     name: 'Checkout rejects removed overstay pricing',
     function: 'calculate_overstay',
     pattern: /\nbegin\n/,
