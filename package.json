@@ -40,7 +40,8 @@
     "format:check": "node scripts/check-format.mjs",
     "preview": "vite preview",
     "test:webhook-mutations": "node scripts/webhook-mutation-test.mjs",
-    "test:sql-mutations": "node scripts/sql-mutation-test.mjs"
+    "test:sql-mutations": "node scripts/sql-mutation-test.mjs",
+    "test:db:all": "node scripts/run-full-sql-verification.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.112.3",
