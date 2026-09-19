@@ -197,15 +197,15 @@ begin
     -- The RPC must hand the caller the same set, so the UI can name it.
     if v_affected is null
        or pg_catalog.jsonb_array_length(v_affected) <> 1
-       or (v_affected -> 0 ->> 'reservation_id') <> v_blocking_reservation::text
-       or (v_affected -> 0 ->> 'shared') <> 'customer+vehicle' then
+       or (v_affected -> 0 ->> 'reservation_id') is distinct from v_blocking_reservation::text
+       or (v_affected -> 0 ->> 'shared') is distinct from 'customer+vehicle' then
       raise exception 'CORRECTION FAIL: correct_reservation did not return the affected reservation';
     end if;
 
     -- The preview staff confirm against must match what actually happened.
-    if v_preview_count <> 1
+    if v_preview_count is distinct from 1
        or v_preview is null
-       or (v_preview -> 0 ->> 'reservation_id') <> v_blocking_reservation::text then
+       or (v_preview -> 0 ->> 'reservation_id') is distinct from v_blocking_reservation::text then
       raise exception 'CORRECTION FAIL: correction scope preview did not match the affected set';
     end if;
 

@@ -9,6 +9,37 @@ const url = assertLoopbackDatabaseUrl(process.env.PARKOS_TEST_DATABASE_URL)
 const invoiceVerifier =
   'supabase/dev-only/20260903000000_verify_invoice_paid.sql'
 const cases = [
+  {
+    name: 'Correction result omits affected identifiers',
+    function: 'correct_reservation',
+    pattern:
+      /select v_reservation\.booking_code, v_total, v_quote, v_affected;/,
+    replacement: `select v_reservation.booking_code, v_total, v_quote, '[{}]'::jsonb;`,
+    verifier:
+      'supabase/dev-only/20260907010000_verify_reservation_corrections.sql',
+    witness:
+      'CORRECTION FAIL: correct_reservation did not return the affected reservation',
+  },
+  {
+    name: 'Correction preview omits affected identifiers',
+    function: 'reservation_correction_scope',
+    pattern: /    v_affected;\nend;/,
+    replacement: `    '[{}]'::jsonb;\nend;`,
+    verifier:
+      'supabase/dev-only/20260907010000_verify_reservation_corrections.sql',
+    witness:
+      'CORRECTION FAIL: correction scope preview did not match the affected set',
+  },
+  {
+    name: 'Correction preview omits its count',
+    function: 'reservation_correction_scope',
+    pattern: /pg_catalog\.jsonb_array_length\(v_affected\)/,
+    replacement: 'null::integer',
+    verifier:
+      'supabase/dev-only/20260907010000_verify_reservation_corrections.sql',
+    witness:
+      'CORRECTION FAIL: correction scope preview did not match the affected set',
+  },
   ...[
     [
       'refund',
