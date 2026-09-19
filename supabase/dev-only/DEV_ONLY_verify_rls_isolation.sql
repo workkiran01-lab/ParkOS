@@ -1342,6 +1342,38 @@ begin
   raise notice 'CHECK12 PASS: permit roles/RLS isolated; active permit blocks reservations; cancel releases hold';
 end $$;
 
+-- CHECK0d: TRUNCATE ignores RLS and row triggers. Check deployed tables AND
+-- a new table, so a clean CI ACL cannot hide unsafe platform defaults.
+do $$
+declare v_leaks text;
+begin
+  select string_agg(c.relname || ':' || r.role_name, ', ' order by c.relname, r.role_name)
+    into v_leaks
+    from pg_class c join pg_namespace n on n.oid = c.relnamespace
+    cross join (values ('anon'),('authenticated'),('service_role')) r(role_name)
+   where n.nspname = 'public' and c.relkind in ('r','p')
+     and not exists (select 1 from pg_depend d where d.classid = 'pg_class'::regclass and d.objid = c.oid and d.deptype = 'e')
+     and has_table_privilege(r.role_name, c.oid, 'TRUNCATE');
+  if v_leaks is not null then
+    raise exception 'CHECK0d FAIL: client TRUNCATE bypasses tenant isolation: %', v_leaks;
+  end if;
+  create table public.verifier_truncate_default_probe(id integer);
+  if has_table_privilege('anon', 'public.verifier_truncate_default_probe', 'TRUNCATE')
+     or has_table_privilege('authenticated', 'public.verifier_truncate_default_probe', 'TRUNCATE')
+     or has_table_privilege('service_role', 'public.verifier_truncate_default_probe', 'TRUNCATE') then
+    raise exception 'CHECK0d FAIL: newly created tables inherit client TRUNCATE';
+  end if;
+  drop table public.verifier_truncate_default_probe;
+  set local role authenticated;
+  begin
+    truncate public.memberships;
+    raise exception 'CHECK0d FAIL: authenticated truncated memberships';
+  exception when insufficient_privilege then null;
+  end;
+  reset role;
+  raise notice 'CHECK0d PASS: existing and future application tables refuse client TRUNCATE';
+end $$;
+
 -- CHECK13: last ACTIVE admin is protected at the table boundary, including
 -- writes through other RPCs. Positive controls permit non-last removal.
 do $$
@@ -1409,6 +1441,7 @@ from (values
   ('CHECK0',  'PASS: 22 RLS tables, 61 policies, all definers pin search_path'),
   ('CHECK0b', 'PASS: authenticated has normal DML grants; permits is SELECT-only'),
   ('CHECK0c', 'PASS: payment writes and Stripe event processing are service-role-only'),
+  ('CHECK0d', 'PASS: client TRUNCATE revoked on existing and future application tables'),
   ('CHECK1',  'PASS: Org A sees exactly 2 facilities / 165 spaces, all Org A'),
   ('CHECK1b', 'PASS: Org B sees exactly 1 facility / 10 spaces, all Org B'),
   ('CHECK2',  'PASS: cross-org insert rejected by RLS with SQLSTATE 42501'),

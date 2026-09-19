@@ -9,6 +9,19 @@ const url = assertLoopbackDatabaseUrl(process.env.PARKOS_TEST_DATABASE_URL)
 const invoiceVerifier =
   'supabase/dev-only/20260903000000_verify_invoice_paid.sql'
 const cases = [
+  ...[false, true].map((defaults) => ({
+    name: `Client TRUNCATE rejects ${defaults ? 'unsafe future defaults' : 'unsafe existing grants'}`,
+    scriptPattern: 'begin;',
+    scriptReplacement:
+      'begin;\n' +
+      (defaults
+        ? 'alter default privileges in schema public grant truncate on tables to authenticated;'
+        : 'grant truncate on public.memberships to authenticated;'),
+    verifier: 'supabase/dev-only/DEV_ONLY_verify_rls_isolation.sql',
+    witness: defaults
+      ? 'CHECK0d FAIL: newly created tables inherit client TRUNCATE'
+      : 'CHECK0d FAIL: client TRUNCATE bypasses tenant isolation',
+  })),
   {
     name: 'Walk-in rejects forged GUC authorization',
     function: 'enforce_reservation_operating_hours',
