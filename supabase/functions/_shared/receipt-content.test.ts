@@ -16,8 +16,22 @@ const breakdown = {
   currency: 'USD',
   price_rule_id: '00000000-0000-0000-0000-000000000001',
   line_items: [
-    { date: '2026-08-24', hours: 3.5, hourly_rate_cents: 450, uncapped_cents: 1575, daily_cap_cents: 2000, subtotal_cents: 1575 },
-    { date: '2026-08-25', hours: 9, hourly_rate_cents: 450, uncapped_cents: 4050, daily_cap_cents: 2000, subtotal_cents: 2000 },
+    {
+      date: '2026-08-24',
+      hours: 3.5,
+      hourly_rate_cents: 450,
+      uncapped_cents: 1575,
+      daily_cap_cents: 2000,
+      subtotal_cents: 1575,
+    },
+    {
+      date: '2026-08-25',
+      hours: 9,
+      hourly_rate_cents: 450,
+      uncapped_cents: 4050,
+      daily_cap_cents: 2000,
+      subtotal_cents: 2000,
+    },
   ],
   total_cents: 3575,
 }
@@ -40,7 +54,11 @@ const input: ReceiptInput = {
 const content = buildReceiptContent(input)
 
 // Every line item is represented — none dropped.
-assert.equal(content.rows.length, breakdown.line_items.length, 'row per line item')
+assert.equal(
+  content.rows.length,
+  breakdown.line_items.length,
+  'row per line item',
+)
 
 // Each rendered amount equals that line item's stored subtotal, formatted.
 breakdown.line_items.forEach((item, i) => {
@@ -55,6 +73,16 @@ breakdown.line_items.forEach((item, i) => {
 assert.equal(content.summedCents, breakdown.total_cents, 'lines sum to total')
 assert.equal(content.totalMismatch, false, 'no total mismatch')
 assert.equal(content.total, '$35.75', 'total formatted from cents')
+assert.equal(
+  content.rows[0].when,
+  'Aug 24, 2026',
+  'local price date does not shift',
+)
+assert.equal(
+  content.rows[1].when,
+  'Aug 25, 2026',
+  'second local date is stable',
+)
 
 // Money formatting is cents-exact (no float artifacts).
 assert.equal(formatMoney(1575, 'USD'), '$15.75')

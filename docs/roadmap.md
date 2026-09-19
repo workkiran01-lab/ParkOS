@@ -6,11 +6,150 @@ first — this file tracks work, not architecture.
 
 ## Known gaps (should resolve before real launch)
 
-- **Permit subscription payments are not recorded.** Successful monthly charges are never written
-  anywhere — `invoice.payment_succeeded` is unhandled and `payments.reservation_id` is `NOT NULL`,
-  so there is nowhere to put the row. 4 live subscriptions currently bill with zero record, and
-  every revenue report is understated by that amount. See the known-gap section in
-  `ARCHITECTURE.md`. Arguably the most urgent item here: this is working, selling, untracked revenue.
+- **CI and production do not share a privilege model, and neither can check the other.**
+  Hosted Supabase ships `ALTER DEFAULT PRIVILEGES` granting `anon`, `authenticated` and
+  `service_role` on every new table in `public`. The local stack CI runs against does
+  not: `supabase/config.toml` leaves `auto_expose_new_tables` unset, which its own
+  comment describes as "new entities are NOT auto-exposed, matching the new cloud
+  default". In CI the grants are therefore exactly what the migrations issue and
+  nothing more. The gap is asymmetric and cuts both ways.
+  - **Code relying on the hosted defaults passes in prod and fails in CI.**
+    `scripts/concurrency-test.mjs` did exactly this. Written against a hosted project
+    as `service_role`, it broke the moment `8f57211` pointed it at the local stack,
+    because here `service_role` holds only `customers`, `permits`, `receipts`,
+    `booth_payments` and `permit_payments` -- the core tables are granted to
+    `authenticated` alone (`20260819040000:193`, `20260819060000:343`). It failed with
+    `permission denied for table spaces`, which reads like a bug in the test rather
+    than a difference between two environments.
+  - **CI cannot catch over-permissioning that exists only in prod.** The same default
+    privileges hand `anon` `arwdDxtm` on every new table, with RLS the only thing in
+    the way. A verifier run against the local stack sees a schema where that grant was
+    never made, so it reports clean no matter what the real database looks like.
+    `verify_no_anon_execute.sql` says as much in its own "EXTENDING THIS" note.
+    The consequence is that the RLS and ACL verifiers prove something weaker than they
+    appear to: they prove the migrations' explicit grants are correct, not that the
+    deployed database's effective grants are. Closing it means either running the
+    verifiers against the real project, or setting `auto_expose_new_tables = true` so the
+    local stack reproduces the hosted default and the verifiers see the same schema prod
+    has. The field is deprecated and removed on 2026-10-30, after which the two converge
+    on the always-revoked behaviour -- at which point prod needs the explicit grants the
+    migrations already issue, and that transition deserves its own check.
+- **The Week 1 permit migrations and the Stripe webhook deploy are one operation, not
+  two.** Merging `booking/new-reservation` performs neither -- CI at `81293b2` has no
+  `supabase functions deploy` step and no migration is applied by a push -- but the two
+  halves are coupled and the coupling is invisible from either side alone.
+  `ed0b7f9` (invoice.paid removed in the Stripe Basil API, payload readers extracted)
+  and `7ccbbd1` (Stripe SDK and API version pinned) rewrite the dispatch in
+  `supabase/functions/stripe-webhook/index.ts`: it gains `invoice.payment_succeeded`
+  and `invoice.paid` as subscribed types and routes both to `processPaidInvoice` ->
+  `record_permit_payment`. The version on `main` before the merge subscribes to
+  neither -- its list is `customer.subscription.*` and `invoice.payment_failed` only --
+  and has no `processPaidInvoice` at all. On the database side,
+  `20260903000000_permit_payments_invoice_paid.sql` documents that new routing,
+  `20260904000000_drop_dead_invoice_paid_branch.sql` drops the now-unreachable
+  `invoice.paid` arm from `process_stripe_subscription_event` **on the stated premise
+  that "the webhook is the function's only production caller, and it never routes
+  invoice.paid here"**, and `20260905000000_stripe_event_unresolved_payment.sql` makes
+  an unresolvable charge answer 200 rather than 500.
+  **Migrations applied without the deploy is the dangerous order, and it fails
+  silently.** The deployed webhook subscribes to neither invoice event, so a permit
+  subscription invoice settles at Stripe, no handler runs, nothing raises, and
+  `permit_payments` stays empty -- the exact "money collected, ledger records nothing"
+  shape `20260829000000` and `20260903000000` exist to close, reintroduced by shipping
+  half. Worse, `process_stripe_subscription_event` claims an event into
+  `processed_stripe_events` _before_ dispatching on type and returns `processed: true`
+  from its final `else`, so an event that lands in the wrong half is not recoverable by
+  redelivery: a replay answers `duplicate_event`.
+  The reverse order is safe by comparison. A new webhook calling a
+  `record_permit_payment` that does not exist yet raises, the webhook 500s, and Stripe
+  retries until the migration lands -- loud and self-healing.
+  So: apply the ten migrations and deploy the five Edge Functions in one window,
+  migrations first, then reconcile `permit_payments` against Stripe for the window.
+  `7ccbbd1` adds a third moving part the repo cannot see -- webhook payloads render at
+  the endpoint API version set in the Stripe Dashboard, so the pin in code does not by
+  itself determine what arrives.
+  This is a production-deployment ordering constraint, not a merge blocker: the merge
+  itself changes nothing in production.
+- **A direct-SQL staff session can switch the operating-hours gate off for scheduled bookings.**
+  `20260909000000_exempt_walk_in_from_operating_hours.sql` exempts walk-in check-in with a
+  transaction-scoped GUC: `public.check_in_walk_in` runs
+  `pg_catalog.set_config('parkos.walk_in_checkin', 'on', true)` around its own insert
+  (`supabase/migrations/20260909000000_exempt_walk_in_from_operating_hours.sql:91`) and
+  `public.enforce_reservation_operating_hours` returns early when it reads `'on'` (same file,
+  line 31). The trigger being short-circuited is `reservations_operating_hours`,
+  `before insert or update of facility_id, during on public.reservations`
+  (`supabase/migrations/20260907000000_staff_reservation_creation.sql:131`).
+  An API client cannot forge the flag, and that half of the migration's reasoning holds: PostgREST
+  sets only `request.*` GUCs from a request and exposes no function taking a GUC name. A session
+  with direct SQL can — `select set_config('parkos.walk_in_checkin', 'on', true)` followed by an
+  ordinary `insert into public.reservations` lands a _scheduled_ booking outside posted hours with
+  no `OUTSIDE_OPERATING_HOURS`.
+  The migration dismisses this as "such a caller can already write `public.reservations`
+  directly", which understates it. `authenticated` does hold INSERT on `reservations` (CHECK 0b,
+  `supabase/dev-only/DEV_ONLY_verify_rls_isolation.sql:206`), but `reservations_operating_hours`
+  is a BEFORE INSERT trigger and fires on a direct insert too, so before this migration a
+  direct-SQL staff session was still gated on the window. The flag is a bypass that caller did not
+  previously have, not one it already had. RLS and the `space_holds` exclusion constraint are
+  untouched, so the reachable effect is a booking recorded outside posted hours -- not
+  cross-tenant access and not a double book.
+  Recorded, not fixed. Narrowing the flag does not close it: any signal `check_in_walk_in` can set
+  in its own session, a direct-SQL caller in that session can set too. What would help is making a
+  future widening visible -- a verifier case asserting that a scheduled write still raises
+  `OUTSIDE_OPERATING_HOURS` when the session has pre-set `parkos.walk_in_checkin`.
+- **The same miss-and-500 shape is still live in both permit webhook functions.**
+  `20260905000000_stripe_event_unresolved_payment.sql` fixed it in `process_stripe_event` only:
+  a charge that resolves to nothing now returns `{processed: false, outcome: 'payment_not_found'}`
+  instead of raising `PAYMENT_NOT_FOUND`, so the webhook answers 200 rather than 500ing and letting
+  Stripe retry an event that can never apply for days. Two sibling functions still raise on the
+  same "resolved by the supplied identifier, missed" path and will 500 identically:
+  - `public.record_permit_payment` —
+    `supabase/migrations/20260829000000_permit_payments.sql:156` raises `PERMIT_NOT_FOUND`.
+    Reached from `processPaidInvoice` in `supabase/functions/stripe-webhook/index.ts`, whose
+    200-ignored guard only catches an invoice carrying _no_ ParkOS identifier. An invoice carrying
+    a subscription id that is not ours — another product on the same platform Stripe account —
+    resolves, misses, and raises.
+  - `public.process_stripe_subscription_event` — current definition at
+    `supabase/migrations/20260904000000_drop_dead_invoice_paid_branch.sql:96` raises
+    `PERMIT_NOT_FOUND`. Reached from `processSubscriptionEvent` for `customer.subscription.*` and
+    `invoice.payment_failed`, with the same guard and the same hole.
+    Each is the same one-line change as the fixed one plus a verifier case, but a different function
+    and a different blast radius, so neither was folded into a commit scoped to one bug. Their
+    `PERMIT_IDENTIFIER_REQUIRED` raises should _stay_ raises, for the reason
+    `PAYMENT_IDENTIFIER_REQUIRED` did: being handed no identifier at all is a payload we do not
+    understand, not an event that belongs to somebody else.
+- **No reconciliation for a permit cancellation Stripe confirmed but no webhook completed.**
+  Cancelling a Stripe-billed permit now calls Stripe first and lets
+  `customer.subscription.deleted` write the cancellation, so a failed Stripe call leaves the
+  permit active and still held rather than cancelled-and-released. The remaining hole is the
+  other end: if Stripe cancels but the webhook is never delivered inside Stripe's retry window,
+  `permits.cancellation_requested_at` stays set while `status` stays `active`, the space stays
+  held, and billing has already stopped. The permit reads "Cancelling" forever and nothing
+  retries. `create-permit-subscription` deliberately does not repair this itself, because
+  Decision #7 keeps the webhook the sole writer of cancellation state. Needs a periodic sweep
+  that re-reads Stripe for permits with an outstanding request and drives them to a final state,
+  or an explicit staff "reconcile now" action. Deliberately not built with the ordering fix.
+- **Permit reconciliation detects but does not remediate.**
+  `20260901000000_permit_event_ordering_guard.sql` added `report_permit_reconciliation()` and a
+  15-minute `parkos-permit-reconciliation` pg_cron job that logs a warning when it finds anything.
+  Both are read-only on purpose. The two classifications that matter cannot be resolved from
+  ParkOS state at all: `stuck_pending` is indistinguishable from a permit whose subscription
+  Stripe _did_ create and whose `customer.subscription.created` was simply never delivered, and
+  `suspended_unverified` is indistinguishable from a genuinely unpaid invoice or a terminal
+  `incomplete_expired` subscription. Auto-abandoning the first would cancel a live, billing
+  subscription. Remediation therefore needs `subscriptions.retrieve`, and it cannot live in the
+  database: the Stripe key is Edge-Function-only and neither `pg_net` nor `http` is installed, so
+  a Stripe-calling reconciler can never be a pg_cron job. It also cannot simply re-invoke
+  `create-permit-subscription`, whose `parkos-permit-subscription:{permit_id}` idempotency key
+  Stripe prunes after 24 hours — past that, a retry bills the customer a second time. Build it as
+  an Edge Function that consumes this report, with a dry-run mode on first deploy.
+- **Two reordered `customer.subscription.updated` events are still unordered.**
+  The guard in `20260901000000` keeps a snapshot from lowering the permit status rank unless it
+  carries a real post-activation failure, which closes the reported `created`-after-`active` race
+  and the cancelled-permit resurrection alongside it. It cannot separate two `updated` events that
+  swap order while both carry post-activation statuses, because Stripe explicitly disclaims
+  `event.created` for ordering and the Subscription object exposes no version or modified-at
+  field. Settling that needs the authoritative object from `subscriptions.retrieve` in the webhook
+  handler — Edge Function work, tracked with the remediation entry above.
 - **Customer self-pay handoff at the booth doesn't exist.** Staff can collect cash or card-terminal
   payment directly, but the booth screen has no link or QR that lets the customer start Stripe
   Checkout on their own phone. This is separate from the receipt QR, which opens the staff-only
@@ -41,11 +180,12 @@ first — this file tracks work, not architecture.
   `anon` absent from the raw ACL. The real access model now lives in `COMMENT ON FUNCTION` rather
   than in migration headers, because the headers that assert "No anon access" are in already-applied
   files and cannot be edited without making the repo disagree with what ran.
-  **Still open:** the underlying `ALTER DEFAULT PRIVILEGES` is unchanged, so every function added
-  from here gets `anon` EXECUTE again at creation. `revoke ... from public` will not stop it — new
-  migrations must `revoke execute ... from anon` explicitly, and nothing currently enforces that.
-  A guard in `scripts/` (in the spirit of the SQL special-form check) or a periodic ACL audit query
-  would catch a regression; neither exists yet.
+  **Resolved for repo-owned functions:** `20260826040000_revoke_anon_default_and_sweep.sql` revokes
+  `anon` EXECUTE from the `postgres` default function privileges and sweeps existing
+  `postgres`-owned functions except the deliberate public allowlist. The separate
+  `supabase_admin` default ACL cannot be changed by migrations running as `postgres`, but ParkOS
+  does not create functions under that owner. `npm run test:acl` audits the linked database and
+  fails if an unexpected public function is executable by `anon`.
 - **The same default privileges grant `anon` full DML on every new table in `public`, and RLS is
   the only thing stopping it. UNMITIGATED.** The `ALTER DEFAULT PRIVILEGES` behind the function
   issue above is not limited to functions. Confirmed on parkos-dev, for both the `postgres` and
@@ -53,12 +193,35 @@ first — this file tracks work, not architecture.
   `anon=arwdDxtm` — SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER — and new
   sequences to `anon=rwU`. Every ParkOS table happens to have RLS enabled (Decision #1), which is
   what makes this survivable today. But that means **a single table created without
-  `enable row level security` is an immediate, unauthenticated read *and write* hole**, not a slow
+  `enable row level security` is an immediate, unauthenticated read _and write_ hole**, not a slow
   leak — the grant is already there waiting, and nothing announces it. This is a strictly larger
   exposure than the function grants, and unlike those it has not been fixed or worked around.
   `supabase/dev-only/verify_no_anon_execute.sql` could be extended to cover it: the check is a join
   over `pg_class` for tables in `public` where `relrowsecurity` is false or `anon` holds any
   privilege. Not built. Recording only — do not assume this is handled.
+- **`reservations` has zero RLS UPDATE policies, so no field is correctable after creation.**
+  The table has only `reservations_select`, `reservations_select_own`, `reservations_insert`, and
+  `reservations_insert_own` — no UPDATE policy at all, while RLS is enabled. Every mutation goes
+  through a `SECURITY DEFINER` RPC (`confirm_reservation`, `cancel_reservation`,
+  `check_in_reservation`, `extend_reservation`, …), each of which writes a fixed set of columns.
+  **The failure mode is silent.** Table-level `UPDATE` _is_ granted to `authenticated`, so a client
+  UPDATE is not rejected — it matches zero rows and returns success. Measured on parkos-dev: the
+  same `update reservations set vehicle_id = …` affects 1 row as `postgres` and **0 rows as a real
+  staff admin**, with no error, on a row that same admin can `SELECT`. Nothing in the UI does this
+  today, so nothing is broken; the hazard is that the next person who tries will get a green path
+  that does nothing.
+  Direct consequence: **`vehicle_id` must be supplied at creation or never** — which is why
+  `/app/booking/new` requires a vehicle even though the column is nullable. Any future "edit
+  reservation" feature (fix a plate, correct a customer, adjust a window outside `extend_reservation`)
+  needs an RPC or an UPDATE policy **first** — it cannot be built in the client alone.
+- **`create-checkout-session` is unusable from any staff context.** Its success and cancel URLs are
+  hardcoded to `${returnOrigin}/my/reservations?checkout=…`
+  (`supabase/functions/create-checkout-session/index.ts`), which is the customer area. The function
+  itself works for staff — it authorizes with the caller's JWT and staff can select any org
+  reservation under RLS — so a staff member _can_ start a Checkout session, but completing it
+  dumps them on a customer page that is empty for a user with no customer record. This is why the
+  New Booking flow deliberately stops at `pending` rather than offering Checkout. Fixing it means
+  making the return path caller-aware; not attempted.
 - **`facilities.timezone` has no validation, and the obvious constraint is worse than none.**
   Nothing stops an arbitrary string being stored; `'Pacific'` reached parkos-dev that way. The
   tempting fix is `check (public.safe_timezone(timezone) = timezone)`. **Do not add it.** Measured
@@ -84,13 +247,13 @@ first — this file tracks work, not architecture.
   raises `22023` on an unusable value. The `reporting_functions` family and the newer
   `facility_daily_manifest` bin by `public.safe_timezone(f.timezone)`, which falls back to UTC so
   one bad facility cannot take down a whole query. Consequence: for a facility whose timezone
-  string is malformed, the manifest bins by UTC while the dashboard's arrivals card does something
-  else, and the two surfaces show different days. This is live, not theoretical — the duplicate
-  "Sol city" above has `Pacific`, and on 2026-08-26 its manifest "today" was 2026-08-27 while every
-  correctly-configured facility's was 2026-08-26. **Deliberate, not fixed.** The manifest chose
-  `safe_timezone` as the safer of the two rather than propagate the raising version; converging the
-  dashboard family onto `safe_timezone` is the real fix and is its own migration. Do not treat the
-  divergence as a manifest bug.
+  string is malformed, the manifest bins by UTC while the dashboard's arrivals card raises an
+  error. Before the duplicate "Sol city" facility was corrected from `Pacific` to
+  `America/Los_Angeles` on 2026-08-26, its manifest "today" was 2026-08-27 while every
+  correctly-configured facility's was 2026-08-26. No invalid facility timezone is currently known,
+  but the two SQL conventions still diverge if another malformed value is stored. The manifest
+  chose `safe_timezone` as the safer behavior; converging the dashboard family onto
+  `safe_timezone` remains the durable fix and requires its own migration.
 - **No back/breadcrumb navigation anywhere in the staff app** (`/app/*`). Noticed during testing.
   A real UX gap, not yet scoped.
 - **Multi-role login edge cases.** One auth user holding both a staff membership and a customer
@@ -111,6 +274,30 @@ first — this file tracks work, not architecture.
   `public_create_reservation` → `check_in_walk_in` for the return-type change (same pattern
   already handled once for booking_code generation itself). Not done now — deliberately kept out
   of a UI/design-pass task.
+- **Commit `d8c72ef` is titled "Typecheck Supabase Edge Functions in CI" but changes no CI.** It
+  added the Deno toolchain and the `typecheck:edge` npm script — `deno.json`, `deno.lock`,
+  `package.json`, `package-lock.json`, and `supabase/functions/_shared/stripe-payload.ts` — and
+  touched nothing under `.github/`. `.github/workflows/ci.yml` already existed by then (added in
+  `f0d8734`), so the title reads as though the step was wired into it there; it was not. The actual
+  `- run: npm run typecheck:edge` line landed two commits later in `8f57211` ("Run verification
+  suite in isolated local CI"). In between, edge typechecking was runnable locally but never ran in
+  CI. History is deliberately not rewritten, so this note stands in place of a corrected commit
+  message: read `d8c72ef` as "add edge typecheck tooling", and `8f57211` as the commit that put it
+  in CI.
+- **A correction retroactively rewrites past daily manifests, though not issued receipts.**
+  `correct_reservation` updates the shared `customers`/`vehicles` rows by design, and since
+  `20260907030000` every reservation it also changes carries its own
+  `correct_reservation_side_effect` audit row keyed on that reservation. What remains unaddressed
+  is the read side: `facility_daily_manifest` joins contact details live
+  (`join public.customers c on c.id = r.customer_id`, `20260826010000_daily_manifest.sql:105`), so
+  a manifest reprinted for a past date shows today's corrected name rather than the name the
+  attendant actually saw that day. **Issued receipts are not affected**: `issueReceipt` renders the
+  PDF once and uploads it, and `receipt-download` serves that stored artifact through
+  `createSignedUrl(storage_path)` without re-rendering, so an already-issued receipt keeps the name
+  it was issued with. Fixing the manifest means either a per-reservation contact snapshot
+  (deliberately rejected — it is a multi-migration change across receipts, reporting, and
+  `get_my_reservations`) or a manifest that reconstructs historical names from the audit trail.
+  Out of scope for the audit-visibility fix that created this note.
 
 ## Implemented in code; deployment remains explicit
 

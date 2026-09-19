@@ -1,0 +1,4 @@
+-- Intentionally empty. Production-safe migrations must not load development
+-- identities or fixtures automatically. Disposable CI databases load
+-- supabase/dev-only/DEV_ONLY_seed_dev_orgs.sql explicitly, after the repository
+-- loopback-host guard has accepted PARKOS_TEST_DATABASE_URL.

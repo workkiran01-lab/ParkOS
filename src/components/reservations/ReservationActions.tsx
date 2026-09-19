@@ -3,6 +3,10 @@ import { toast } from 'sonner'
 import type { QuoteBreakdown } from '@/components/facility/PricingSection'
 import { Button } from '@/components/ui/button'
 import {
+  ReservationCorrectionDialog,
+  type CorrectionDetails,
+} from '@/components/reservations/ReservationCorrectionDialog'
+import {
   Dialog,
   DialogContent,
   DialogDescription,
@@ -12,7 +16,12 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { friendlyError } from '@/lib/errors'
-import { dollars, isoToLocalInput } from '@/lib/format'
+import {
+  FacilityTimeError,
+  facilityInputToUtc,
+  instantToFacilityInput,
+} from '@/lib/facility-time'
+import { dollars } from '@/lib/format'
 import { supabase } from '@/lib/supabase'
 import { Field } from '@/routes/login'
 
@@ -22,11 +31,13 @@ type Props = {
   spaceId: string
   startIso: string
   endIso: string
+  facilityTimezone: string
   /** Staff see a Confirm action and use the staff quote function; customers
    * use the elevated public wrapper. */
   isStaff: boolean
   /** Once Checkout starts, changing the priced window would invalidate it. */
   allowExtend?: boolean
+  correction?: CorrectionDetails
   onDone: () => void | Promise<void>
 }
 
@@ -38,14 +49,18 @@ export function ReservationActions({
   spaceId,
   startIso,
   endIso,
+  facilityTimezone,
   isStaff,
   allowExtend = true,
+  correction,
   onDone,
 }: Props) {
   const [cancelOpen, setCancelOpen] = useState(false)
   const [extendOpen, setExtendOpen] = useState(false)
   const [reason, setReason] = useState('')
-  const [newEnd, setNewEnd] = useState(() => isoToLocalInput(endIso))
+  const [newEnd, setNewEnd] = useState(() =>
+    instantToFacilityInput(endIso, facilityTimezone),
+  )
   const [preview, setPreview] = useState<QuoteBreakdown | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -81,8 +96,18 @@ export function ReservationActions({
   async function previewExtend() {
     setError(null)
     setPreview(null)
-    const end = new Date(newEnd)
-    if (Number.isNaN(end.getTime()) || end <= new Date(endIso)) {
+    let endIsoValue
+    try {
+      endIsoValue = facilityInputToUtc(newEnd, facilityTimezone)
+    } catch (caught) {
+      setError(
+        caught instanceof FacilityTimeError
+          ? caught.message
+          : 'Pick a valid new end.',
+      )
+      return
+    }
+    if (new Date(endIsoValue) <= new Date(endIso)) {
       setError('Pick a new end later than the current end.')
       return
     }
@@ -91,7 +116,7 @@ export function ReservationActions({
     const { data, error: quoteError } = await supabase.rpc(fn, {
       p_space_id: spaceId,
       p_start: startIso,
-      p_end: end.toISOString(),
+      p_end: endIsoValue,
     })
     setBusy(false)
     if (quoteError) {
@@ -107,8 +132,18 @@ export function ReservationActions({
   }
 
   async function commitExtend() {
-    const end = new Date(newEnd)
-    if (Number.isNaN(end.getTime()) || end <= new Date(endIso)) {
+    let endIsoValue
+    try {
+      endIsoValue = facilityInputToUtc(newEnd, facilityTimezone)
+    } catch (caught) {
+      setError(
+        caught instanceof FacilityTimeError
+          ? caught.message
+          : 'Pick a valid new end.',
+      )
+      return
+    }
+    if (new Date(endIsoValue) <= new Date(endIso)) {
       setError('Pick a new end later than the current end.')
       return
     }
@@ -116,11 +151,13 @@ export function ReservationActions({
     setError(null)
     const { error: extendError } = await supabase.rpc('extend_reservation', {
       p_reservation_id: reservationId,
-      p_new_end: end.toISOString(),
+      p_new_end: endIsoValue,
     })
     setBusy(false)
     if (extendError) {
-      setError(friendlyError(extendError, 'The reservation could not be extended.'))
+      setError(
+        friendlyError(extendError, 'The reservation could not be extended.'),
+      )
       return
     }
     setExtendOpen(false)
@@ -129,14 +166,54 @@ export function ReservationActions({
     await onDone()
   }
 
+  /**
+   * Staff-only, pending-only. Until this existed, confirm_reservation had zero
+   * callers anywhere in the codebase and pending -> confirmed happened ONLY via
+   * the Stripe webhook. That left any booth-paid or deliberately-unpaid
+   * scheduled booking with no route out of `pending`, so parkos-no-show-sweep
+   * (pg_cron, every 5 min) flipped it to no_show at start + grace and released
+   * the space.
+   */
+  async function confirm() {
+    setBusy(true)
+    setError(null)
+    const { error: confirmError } = await supabase.rpc('confirm_reservation', {
+      p_reservation_id: reservationId,
+    })
+    setBusy(false)
+    if (confirmError) {
+      setError(
+        friendlyError(confirmError, 'The reservation could not be confirmed.'),
+      )
+      return
+    }
+    toast.success('Reservation confirmed')
+    await onDone()
+  }
+
   return (
     <div className="flex flex-wrap gap-2">
+      {isStaff && correction && (
+        <ReservationCorrectionDialog
+          reservationId={reservationId}
+          currentSpaceId={spaceId}
+          startIso={startIso}
+          endIso={endIso}
+          details={correction}
+          onDone={onDone}
+        />
+      )}
+      {isStaff && status === 'pending' && (
+        <Button size="sm" variant="outline" disabled={busy} onClick={confirm}>
+          {busy ? 'Confirming…' : 'Confirm'}
+        </Button>
+      )}
       {allowExtend && (
         <Button
           size="sm"
           variant="outline"
           onClick={() => {
-            setNewEnd(isoToLocalInput(endIso))
+            setNewEnd(instantToFacilityInput(endIso, facilityTimezone))
             setPreview(null)
             setError(null)
             setExtendOpen(true)
@@ -230,7 +307,11 @@ export function ReservationActions({
                   {busy ? 'Extending…' : 'Confirm extend'}
                 </Button>
               ) : (
-                <Button variant="outline" disabled={busy} onClick={previewExtend}>
+                <Button
+                  variant="outline"
+                  disabled={busy}
+                  onClick={previewExtend}
+                >
                   {busy ? 'Pricing…' : 'Preview new total'}
                 </Button>
               )}

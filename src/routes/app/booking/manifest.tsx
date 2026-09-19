@@ -94,9 +94,7 @@ function DailyManifest() {
       { p_facility_id: facilityId, p_date: date },
     )
     if (rpcError) {
-      setError(
-        friendlyError(rpcError, 'The manifest could not be loaded.'),
-      )
+      setError(friendlyError(rpcError, 'The manifest could not be loaded.'))
       setRows([])
     } else {
       setRows((data ?? []) as ManifestRow[])
@@ -279,7 +277,11 @@ function CheckStatus({
         params={{ bookingCode: row.booking_code }}
         className="inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline"
       >
-        {row.checked_out_at ? 'Open' : row.checked_in_at ? 'Check out' : 'Check in'}
+        {row.checked_out_at
+          ? 'Open'
+          : row.checked_in_at
+            ? 'Check out'
+            : 'Check in'}
         <ArrowRight className="size-3" aria-hidden="true" />
       </Link>
     </div>

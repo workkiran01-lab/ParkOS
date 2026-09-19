@@ -34,8 +34,18 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
-import { defaultLocalDatetime, dollars } from '@/lib/format'
-import { spaceTypes, type SpaceRow, type SpaceType, type ZoneRow } from '@/lib/holds'
+import {
+  FacilityTimeError,
+  facilityInputToUtc,
+  instantToFacilityInput,
+} from '@/lib/facility-time'
+import { dollars } from '@/lib/format'
+import {
+  spaceTypes,
+  type SpaceRow,
+  type SpaceType,
+  type ZoneRow,
+} from '@/lib/holds'
 import { supabase } from '@/lib/supabase'
 import { Field } from '@/routes/login'
 
@@ -67,6 +77,7 @@ export type QuoteBreakdown = {
 type Props = {
   orgId: string
   facilityId: string
+  facilityTimezone: string
   zones: ZoneRow[]
   spaces: SpaceRow[]
   rules: PriceRuleRow[]
@@ -78,6 +89,7 @@ const ANY = 'any'
 export function PricingSection({
   orgId,
   facilityId,
+  facilityTimezone,
   zones,
   spaces,
   rules,
@@ -139,7 +151,9 @@ export function PricingSection({
     setSpaceType(rule.space_type ?? ANY)
     setHourlyDollars((rule.hourly_rate_cents / 100).toFixed(2))
     setCapDollars(
-      rule.daily_cap_cents === null ? '' : (rule.daily_cap_cents / 100).toFixed(2),
+      rule.daily_cap_cents === null
+        ? ''
+        : (rule.daily_cap_cents / 100).toFixed(2),
     )
     setPriority(rule.priority)
     setError(null)
@@ -239,34 +253,51 @@ export function PricingSection({
     const space = matchingSpace(rule)
     setPreviewRule(rule)
     setPreviewSpace(space)
-    setPreviewStart(defaultLocalDatetime())
+    setPreviewStart(instantToFacilityInput(new Date(), facilityTimezone))
     setPreviewHours(4)
     setQuote(null)
     setPreviewError(
-      space ? null : 'No active space matches this rule’s scope to preview with.',
+      space
+        ? null
+        : 'No active space matches this rule’s scope to preview with.',
     )
   }
 
   async function runPreview(event: FormEvent) {
     event.preventDefault()
     if (!previewSpace) return
-    const start = new Date(previewStart)
-    if (Number.isNaN(start.getTime()) || previewHours <= 0) {
+    let startIso
+    try {
+      startIso = facilityInputToUtc(previewStart, facilityTimezone)
+    } catch (caught) {
+      setPreviewError(
+        caught instanceof FacilityTimeError
+          ? caught.message
+          : 'Enter a valid start time.',
+      )
+      return
+    }
+    if (previewHours <= 0) {
       setPreviewError('Enter a valid start time and positive duration.')
       return
     }
-    const end = new Date(start.getTime() + previewHours * 3600_000)
+    const end = new Date(
+      new Date(startIso).getTime() + previewHours * 3_600_000,
+    )
     setQuoting(true)
     setPreviewError(null)
     setQuote(null)
 
     // The real pricing function, against a real space in this rule's scope —
     // proves the rule and quote_reservation agree, not just that the row saved.
-    const { data, error: quoteError } = await supabase.rpc('quote_reservation', {
-      p_space_id: previewSpace.id,
-      p_start: start.toISOString(),
-      p_end: end.toISOString(),
-    })
+    const { data, error: quoteError } = await supabase.rpc(
+      'quote_reservation',
+      {
+        p_space_id: previewSpace.id,
+        p_start: startIso,
+        p_end: end.toISOString(),
+      },
+    )
 
     setQuoting(false)
     if (quoteError) {
@@ -319,7 +350,9 @@ export function PricingSection({
             <TableBody>
               {visibleRules.map((rule) => (
                 <TableRow key={rule.id}>
-                  <TableCell className="font-medium">{scopeLabel(rule)}</TableCell>
+                  <TableCell className="font-medium">
+                    {scopeLabel(rule)}
+                  </TableCell>
                   <TableCell>{dollars(rule.hourly_rate_cents)}/hr</TableCell>
                   <TableCell>
                     {rule.daily_cap_cents === null
@@ -335,7 +368,11 @@ export function PricingSection({
                     )}
                   </TableCell>
                   <TableCell className="space-x-2">
-                    <Button size="sm" variant="outline" onClick={() => openEdit(rule)}>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => openEdit(rule)}
+                    >
                       Edit
                     </Button>
                     <Button
@@ -364,7 +401,9 @@ export function PricingSection({
         >
           <DialogContent>
             <DialogHeader>
-              <DialogTitle>{editing ? 'Edit price rule' : 'Add price rule'}</DialogTitle>
+              <DialogTitle>
+                {editing ? 'Edit price rule' : 'Add price rule'}
+              </DialogTitle>
               <DialogDescription>
                 Leave zone and type as “Any” for a facility-wide rule.
               </DialogDescription>
@@ -425,7 +464,9 @@ export function PricingSection({
                     type="number"
                     required
                     value={priority}
-                    onChange={(event) => setPriority(Number(event.target.value))}
+                    onChange={(event) =>
+                      setPriority(Number(event.target.value))
+                    }
                   />
                 </Field>
               </div>
@@ -435,7 +476,9 @@ export function PricingSection({
                   <Button
                     type="button"
                     variant={editing.archived_at ? 'default' : 'destructive'}
-                    onClick={() => setRuleArchived(editing, !editing.archived_at)}
+                    onClick={() =>
+                      setRuleArchived(editing, !editing.archived_at)
+                    }
                   >
                     {editing.archived_at ? 'Restore rule' : 'Archive rule'}
                   </Button>
@@ -487,7 +530,9 @@ export function PricingSection({
                     step="0.5"
                     required
                     value={previewHours}
-                    onChange={(event) => setPreviewHours(Number(event.target.value))}
+                    onChange={(event) =>
+                      setPreviewHours(Number(event.target.value))
+                    }
                   />
                 </Field>
               </div>
@@ -505,7 +550,11 @@ export function PricingSection({
                     ) : (
                       <Badge variant="destructive">
                         A different rule won (
-                        {ruleShortLabel(quote.price_rule_id, visibleRules, scopeLabel)}
+                        {ruleShortLabel(
+                          quote.price_rule_id,
+                          visibleRules,
+                          scopeLabel,
+                        )}
                         )
                       </Badge>
                     )}
@@ -525,7 +574,9 @@ export function PricingSection({
                         <TableRow key={item.date}>
                           <TableCell>{item.date}</TableCell>
                           <TableCell>{item.hours}</TableCell>
-                          <TableCell>{dollars(item.hourly_rate_cents)}/hr</TableCell>
+                          <TableCell>
+                            {dollars(item.hourly_rate_cents)}/hr
+                          </TableCell>
                           <TableCell>
                             {item.daily_cap_cents === null
                               ? '—'

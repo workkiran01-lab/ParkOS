@@ -1,16 +1,21 @@
 -- DEV-ONLY manual RLS isolation verification (assertion-only; changes no schema or data).
 -- Companion to supabase/tests/rls_isolation_checks.sql (the interactive SQL-editor
--- version). Run this manually against parkos-dev after policy changes. Every block
+-- version). Run this against a disposable local database after policy changes. Every block
 -- RAISES EXCEPTION on failure, so a failed check aborts execution with its message.
 --
--- Depends on the dev seed (20260819040100); like the seed, dev-project only.
+-- Depends on the dev seed (DEV_ONLY_seed_dev_orgs.sql); local database only.
+-- Every check runs inside one transaction that is unconditionally rolled back;
+-- the final summary runs afterwards so the Management API returns visible proof.
+
+begin;
 
 -- ---------------------------------------------------------------------------
--- CHECK 0: the DDL actually landed — 17 RLS-enabled tables, 52 policies,
+-- CHECK 0: the DDL actually landed — 21 RLS-enabled tables, 61 policies,
 -- all authorization/bootstrap/lifecycle functions present and SECURITY DEFINER.
 -- ---------------------------------------------------------------------------
 do $$
 declare v int;
+        v_definers int;
 begin
   select count(*) into v from pg_tables
    where schemaname = 'public' and rowsecurity
@@ -18,9 +23,10 @@ begin
                        'zones','spaces','customers','vehicles','reservations',
                        'permits','price_rules','space_holds','invites','audit_log',
                        'payments','processed_stripe_events','vehicle_photos',
-                       'booth_payments');
-  if v <> 18 then
-    raise exception 'CHECK0 FAIL: expected 18 RLS-enabled tables, found %', v;
+                       'booth_payments','receipts','account_status',
+                       'permit_payments');
+  if v <> 21 then
+    raise exception 'CHECK0 FAIL: expected 21 RLS-enabled tables, found %', v;
   end if;
 
   -- 36 through Week 4, +1 in Week 5 (space_holds_update for release-early),
@@ -31,30 +37,60 @@ begin
   -- +2 in Week 10 (vehicle_photos SELECT for members, INSERT for staff),
   -- +2 in Week 12 (permit own SELECT and staff UPDATE),
   -- +3 for account deactivation (account_status), which this count had drifted
-  -- behind, and +2 for booth_payments (SELECT for members, SELECT for owners).
+  -- behind, +2 for booth_payments (SELECT for members, SELECT for owners), and
+  -- +2 for permit_payments (SELECT for members, SELECT for owners).
   select count(*) into v from pg_policies where schemaname = 'public';
-  if v <> 59 then
-    raise exception 'CHECK0 FAIL: expected 59 policies, found %', v;
+  if v <> 61 then
+    raise exception 'CHECK0 FAIL: expected 61 policies, found %', v;
   end if;
 
+  -- DERIVED FROM THE CATALOG, NEVER ENUMERATED. This assertion used to be a
+  -- hand-maintained list of 25 function names with a literal count. Nothing
+  -- updated it when a definer function was added, so it silently drifted 11
+  -- functions behind (abandon_pending_permit, calculate_overstay,
+  -- correct_reservation, deactivate_account, generate_booking_code,
+  -- is_account_deactivated, record_booth_payment, record_permit_payment,
+  -- request_permit_cancellation, reservation_balance_cents,
+  -- reservation_correction_scope) while still reporting PASS -- including two
+  -- money writers and two functions this branch itself added.
+  --
+  -- Per-function coverage is asserted exhaustively, from the catalog, by
+  -- DEV_ONLY_verify_privileged_functions.sql: a new definer function with no
+  -- coverage row fails it, and a coverage row naming no deployed function fails
+  -- it too. Re-listing names here only created a second list to fall behind.
+  --
+  -- What this check owns instead is the RLS-relevant invariant, derived: a
+  -- SECURITY DEFINER function that does not pin an empty search_path resolves
+  -- names against a caller-influenced search_path while holding the owner's
+  -- privileges, which defeats every policy this file goes on to verify. A new
+  -- definer function is covered the moment it is created, with no list to
+  -- maintain.
   select count(*) into v
     from pg_proc p join pg_namespace n on n.oid = p.pronamespace
    where n.nspname = 'public'
-     and p.proname in ('get_user_role','has_any_role',
-                       'create_organization_with_admin','accept_invite',
-                       'create_facility_with_zones_and_spaces',
-                       'get_public_facility','get_public_availability',
-                       'public_quote_reservation','public_ensure_customer',
-                       'public_create_reservation',
-                       'cancel_reservation','extend_reservation',
-                       'confirm_reservation','mark_no_shows','get_my_reservations',
-                       'process_stripe_event',
-                       'check_in_reservation','check_in_walk_in','check_out_reservation',
-                       'issue_permit','cancel_permit','get_my_permits',
-                       'process_stripe_subscription_event')
-      and p.prosecdef;
-  if v <> 23 then
-    raise exception 'CHECK0 FAIL: helper functions missing or not SECURITY DEFINER (found %)', v;
+     and p.prokind = 'f'
+     and p.prosecdef
+     and pg_catalog.pg_get_userbyid(p.proowner) = 'postgres'
+     -- `is not true`, NOT `not (...)`: proconfig is NULL for a function with no
+     -- SET at all -- the worst case -- and `not (NULL @> ...)` is NULL, which a
+     -- WHERE clause discards. Written the obvious way, this check can only see a
+     -- WRONG search_path and never a MISSING one.
+     and (p.proconfig @> array['search_path=""']) is not true;
+  if v <> 0 then
+    raise exception 'CHECK0 FAIL: % SECURITY DEFINER function(s) in public do not pin an empty search_path', v;
+  end if;
+
+  -- Floor, not an equality: this is the "migrations landed" smoke test, and an
+  -- exact literal is the very thing that went stale. Growth is expected and is
+  -- policed per-function by the privileged-function verifier.
+  select count(*) into v_definers
+    from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+   where n.nspname = 'public'
+     and p.prokind = 'f'
+     and p.prosecdef
+     and pg_catalog.pg_get_userbyid(p.proowner) = 'postgres';
+  if v_definers < 25 then
+    raise exception 'CHECK0 FAIL: only % SECURITY DEFINER functions in public -- migrations did not land', v_definers;
   end if;
 
   -- is_own_customer must stay SECURITY INVOKER: it is safe from recursion only
@@ -65,7 +101,7 @@ begin
   if v <> 1 then
     raise exception 'CHECK0 FAIL: is_own_customer missing or wrongly SECURITY DEFINER';
   end if;
-  raise notice 'CHECK0 PASS: 17 RLS tables, 54 policies, 23 SECURITY DEFINER functions';
+  raise notice 'CHECK0 PASS: 21 RLS tables, 61 policies, % SECURITY DEFINER functions all pinning search_path', v_definers;
 end $$;
 
 -- ---------------------------------------------------------------------------
@@ -466,7 +502,7 @@ declare
   v_rule uuid;
   v_reservation uuid;
   v_b_space_ids uuid[];
-  v_start timestamptz := date_trunc('hour', now()) + interval '200 days';
+  v_start timestamptz;
 begin
   -- setup as postgres
   insert into auth.users
@@ -494,6 +530,22 @@ begin
    where f.org_id = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb'
      and f.archived_at is null
    order by f.name limit 1;
+
+  -- Deterministic at any time of day. This was
+  -- date_trunc('hour', now()) + interval '200 days', which inherited the local
+  -- time-of-day of whenever the suite happened to run. Org B's facility is open
+  -- 08:00-20:00, so for 13 hours out of every 24 the window fell outside its
+  -- posted hours, get_public_availability correctly returned nothing, and the
+  -- non-degenerate assertion below failed on the clock rather than on isolation.
+  -- Pin the wall time to 10:00 on the facility's OWN clock -- read from the row,
+  -- not hardcoded, so it stays correct if the seed timezone changes -- and keep
+  -- the far-future offset that avoids colliding with seeded fixtures. 10:00 is
+  -- never inside a DST spring-forward gap.
+  select (date_trunc('day', (now() at time zone f.timezone))
+            + interval '200 days 10 hours') at time zone f.timezone
+    into v_start
+    from public.facilities f
+   where f.id = v_facility_b;
 
   -- a space in facility A with no unreleased holds at all
   select s.id into v_space
@@ -619,7 +671,12 @@ declare
   v_space uuid;
   v_rule uuid;
   v_res uuid;
-  v_start timestamptz := date_trunc('hour', now()) + interval '300 days';
+  -- Pinned like the others. This block confines itself to Org A's first
+  -- facility by name, which the seed makes Lot A (24_hours), so it is safe
+  -- today -- but only by accident of that facility's hours, so it is pinned
+  -- too rather than left as the one now()-relative window in the file.
+  v_start timestamptz := (date_trunc('day', now() at time zone 'America/Los_Angeles')
+                          + interval '300 days 10 hours') at time zone 'America/Los_Angeles';
 begin
   insert into auth.users
     (instance_id, id, aud, role, email, encrypted_password,
@@ -763,7 +820,14 @@ declare
   v_payment1 uuid;
   v_payment2 uuid;
   v_result jsonb;
-  v_start timestamptz := date_trunc('hour', now()) + interval '600 days';
+  -- Pinned to 10:00 on the facility clock, not the run's time-of-day: see the
+  -- note in CHECK 7. The space below can land in a facility with posted hours,
+  -- and the reservations operating-hours trigger fires on this insert, so a
+  -- now()-relative window failed whenever the suite ran outside them. Every
+  -- seeded facility is America/Los_Angeles and the narrowest posted window is
+  -- 08:00-20:00, so 10:00 is inside all of them.
+  v_start timestamptz := (date_trunc('day', now() at time zone 'America/Los_Angeles')
+                          + interval '600 days 10 hours') at time zone 'America/Los_Angeles';
 begin
   insert into auth.users
     (instance_id, id, aud, role, email, encrypted_password,
@@ -1007,9 +1071,17 @@ declare
   v_res_a uuid;  v_res_b uuid;
   v_photo_a uuid; v_photo_b uuid;
   name_a text; name_b text;
+  -- Pinned to 10:00 on the facility clock, not the run's time-of-day: see the
+  -- note in CHECK 7. The space below can land in a facility with posted hours,
+  -- and the reservations operating-hours trigger fires on this insert, so a
+  -- now()-relative window failed whenever the suite ran outside them. Every
+  -- seeded facility is America/Los_Angeles and the narrowest posted window is
+  -- 08:00-20:00, so 10:00 is inside all of them.
   v_win tstzrange := tstzrange(
-    date_trunc('hour', now()) + interval '400 days',
-    date_trunc('hour', now()) + interval '400 days 1 hour', '[)');
+    (date_trunc('day', now() at time zone 'America/Los_Angeles')
+       + interval '400 days 10 hours') at time zone 'America/Los_Angeles',
+    (date_trunc('day', now() at time zone 'America/Los_Angeles')
+       + interval '400 days 11 hours') at time zone 'America/Los_Angeles', '[)');
 begin
   begin  -- subtransaction: everything below is rolled back before we return
     select z.facility_id, s.id into v_fac_a, v_space_a
@@ -1064,7 +1136,7 @@ begin
     end;
 
     begin
-      perform public.check_out_reservation(v_res_b, 0);
+      perform public.check_out_reservation(v_res_b, now());
       raise exception 'CHECK10 FAIL: Org A attendant checked out an Org B reservation';
     exception
       when sqlstate 'P0001' then
@@ -1140,7 +1212,14 @@ declare
   v_facility uuid;
   v_space uuid;
   v_permit uuid;
-  v_start timestamptz := date_trunc('hour', now()) + interval '900 days';
+  -- Pinned to 10:00 on the facility clock, not the run's time-of-day: see the
+  -- note in CHECK 7. The space below can land in a facility with posted hours,
+  -- and the reservations operating-hours trigger fires on this insert, so a
+  -- now()-relative window failed whenever the suite ran outside them. Every
+  -- seeded facility is America/Los_Angeles and the narrowest posted window is
+  -- 08:00-20:00, so 10:00 is inside all of them.
+  v_start timestamptz := (date_trunc('day', now() at time zone 'America/Los_Angeles')
+                          + interval '900 days 10 hours') at time zone 'America/Los_Angeles';
 begin
   begin
     insert into auth.users
@@ -1169,6 +1248,15 @@ begin
        )
      order by s.id limit 1;
     if v_space is null then raise exception 'CHECK12 FAIL: no long-term test space'; end if;
+
+    -- Low-priority facility-wide rule so quoting always finds something, the same
+    -- fixture CHECK7 and CHECK8 create. The space chosen above can belong to any
+    -- Org A facility, and Lot B has no price_rules row, so without this the
+    -- create_reservation assertion below aborts on P0002 PRICE_RULE_NOT_FOUND
+    -- before it can reach SPACE_UNAVAILABLE. Teardown is this block's existing
+    -- sentinel rollback, so no explicit delete is needed.
+    insert into public.price_rules (org_id, facility_id, hourly_rate_cents, priority)
+    values (org_a, v_facility, 100, -1000);
 
     -- A customer can read their eventual permit, but can never issue one.
     perform set_config('request.jwt.claims',
@@ -1254,11 +1342,13 @@ begin
   raise notice 'CHECK12 PASS: permit roles/RLS isolated; active permit blocks reservations; cancel releases hold';
 end $$;
 
+rollback;
+
 -- The Management API suppresses RAISE NOTICE output. If every assertion above
 -- completes, return an explicit, machine-visible summary for CI/manual evidence.
 select check_name, result
 from (values
-  ('CHECK0',  'PASS: 17 RLS tables, 54 policies, 23 SECURITY DEFINER functions'),
+  ('CHECK0',  'PASS: 21 RLS tables, 61 policies, all definers pin search_path'),
   ('CHECK0b', 'PASS: authenticated has normal DML grants; permits is SELECT-only'),
   ('CHECK0c', 'PASS: payment writes and Stripe event processing are service-role-only'),
   ('CHECK1',  'PASS: Org A sees exactly 2 facilities / 165 spaces, all Org A'),

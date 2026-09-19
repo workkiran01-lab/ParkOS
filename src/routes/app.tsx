@@ -9,6 +9,7 @@ import {
 import {
   BarChart3,
   CalendarDays,
+  CalendarPlus,
   ClipboardList,
   Gauge,
   LayoutDashboard,
@@ -23,7 +24,11 @@ import {
 } from 'lucide-react'
 import { AppShell } from '@/components/layout/AppShell'
 import { DashboardConnectionProvider } from '@/hooks/useDashboardConnection'
-import { FacilityProvider, type FacilityOption } from '@/hooks/useFacility'
+import {
+  FacilityProvider,
+  type FacilityOption,
+  type FacilitySummary,
+} from '@/hooks/useFacility'
 import { useAuth } from '@/hooks/useAuth'
 import { useRole } from '@/hooks/useRole'
 import { supabase } from '@/lib/supabase'
@@ -61,8 +66,12 @@ function AppLayout() {
   const { role, org_id: orgId, full_name: fullName } = useRole()
   const [hasCustomerRecord, setHasCustomerRecord] = useState(false)
   const [facilities, setFacilities] = useState<FacilityOption[]>([])
+  const [allFacilities, setAllFacilities] = useState<FacilitySummary[]>([])
   const [facilityId, setFacilityId] = useState('')
   const [facilitiesLoading, setFacilitiesLoading] = useState(true)
+  const [facilitiesError, setFacilitiesError] = useState<{
+    message: string
+  } | null>(null)
 
   const loadShellData = useCallback(async () => {
     if (!user || !orgId) return
@@ -77,15 +86,26 @@ function AppLayout() {
         .from('facilities')
         // timezone: the daily manifest bins by the facility's local day, not
         // the browser's.
-        .select('id, name, timezone')
+        .select('id, name, timezone, archived_at')
         .eq('org_id', orgId)
-        .is('archived_at', null)
         .order('name'),
     ])
     setHasCustomerRecord(!!customerResult.data)
-    const rows = (facilityResult.data ?? []) as FacilityOption[]
-    setFacilities(rows)
-    setFacilityId((current) => current || rows[0]?.id || '')
+    const rows = (facilityResult.data ?? []) as (FacilityOption & {
+      archived_at: string | null
+    })[]
+    const options = rows.map(({ id, name, timezone }) => ({
+      id,
+      name,
+      timezone,
+    }))
+    const activeOptions = rows
+      .filter((facility) => facility.archived_at === null)
+      .map(({ id, name, timezone }) => ({ id, name, timezone }))
+    setAllFacilities(options)
+    setFacilities(activeOptions)
+    setFacilityId((current) => current || activeOptions[0]?.id || '')
+    setFacilitiesError(facilityResult.error)
     setFacilitiesLoading(false)
   }, [orgId, user])
 
@@ -104,9 +124,11 @@ function AppLayout() {
     <FacilityProvider
       value={{
         facilities,
+        allFacilities,
         facilityId,
         setFacilityId,
         loading: facilitiesLoading,
+        error: facilitiesError,
       }}
     >
       <DashboardConnectionProvider>
@@ -119,106 +141,112 @@ function AppLayout() {
           hasCustomerRecord={hasCustomerRecord}
           onSignOut={signOut}
           sidebar={(collapsed) => (
-          <div className="space-y-6">
-            <NavGroup label="Overview" collapsed={collapsed}>
-              <NavItem
-                to="/app"
-                label="Dashboard"
-                icon={LayoutDashboard}
-                collapsed={collapsed}
-              />
-            </NavGroup>
-            {operations && (
-              <NavGroup label="Booking" collapsed={collapsed}>
+            <div className="space-y-6">
+              <NavGroup label="Overview" collapsed={collapsed}>
                 <NavItem
-                  to="/app/booking/manifest"
-                  label="Daily Manifest"
-                  icon={ClipboardList}
-                  collapsed={collapsed}
-                />
-                {/* Booth keeps its own full-screen layout outside AppShell;
-                    only its position in the sidebar moved. */}
-                <NavItem
-                  to="/attendant"
-                  label="Booth"
-                  icon={SquareParking}
+                  to="/app"
+                  label="Dashboard"
+                  icon={LayoutDashboard}
                   collapsed={collapsed}
                 />
               </NavGroup>
-            )}
-            {operations && (
-              <NavGroup label="Operations" collapsed={collapsed}>
-                <NavItem
-                  to="/app/occupancy"
-                  label="Occupancy"
-                  icon={Gauge}
-                  collapsed={collapsed}
-                />
-                <NavItem
-                  to="/app/availability"
-                  label="Availability"
-                  icon={ParkingSquare}
-                  collapsed={collapsed}
-                />
-                <NavItem
-                  to="/app/reservations"
-                  label="Reservations"
-                  icon={CalendarDays}
-                  collapsed={collapsed}
-                />
-              </NavGroup>
-            )}
-            {management && (
-              <NavGroup label="Management" collapsed={collapsed}>
-                <NavItem
-                  to="/app/facilities"
-                  label="Facilities"
-                  icon={Warehouse}
-                  collapsed={collapsed}
-                />
-                <NavItem
-                  to="/app/permits"
-                  label="Permits"
-                  icon={TicketCheck}
-                  collapsed={collapsed}
-                />
-                <NavItem
-                  to="/app/override"
-                  label="Override"
-                  icon={SlidersHorizontal}
-                  collapsed={collapsed}
-                />
-                {role === 'admin' && (
+              {operations && (
+                <NavGroup label="Booking" collapsed={collapsed}>
                   <NavItem
-                    to="/app/staff"
-                    label="Staff"
-                    icon={UserCog}
+                    to="/app/booking/manifest"
+                    label="Daily Manifest"
+                    icon={ClipboardList}
                     collapsed={collapsed}
                   />
-                )}
-              </NavGroup>
-            )}
-            {management && (
-              <NavGroup label="Insights" collapsed={collapsed}>
-                <NavItem
-                  to="/app/reports"
-                  label="Reports"
-                  icon={BarChart3}
-                  collapsed={collapsed}
-                />
-              </NavGroup>
-            )}
-            {!facilitiesLoading && facilities.length === 0 && (
-              <NavGroup label="Setup" collapsed={collapsed}>
-                <NavItem
-                  to="/app/onboarding"
-                  label="Onboarding"
-                  icon={Sparkles}
-                  collapsed={collapsed}
-                />
-              </NavGroup>
-            )}
-          </div>
+                  <NavItem
+                    to="/app/booking/new"
+                    label="New Booking"
+                    icon={CalendarPlus}
+                    collapsed={collapsed}
+                  />
+                  {/* Booth keeps its own full-screen layout outside AppShell;
+                    only its position in the sidebar moved. */}
+                  <NavItem
+                    to="/attendant"
+                    label="Booth"
+                    icon={SquareParking}
+                    collapsed={collapsed}
+                  />
+                </NavGroup>
+              )}
+              {operations && (
+                <NavGroup label="Operations" collapsed={collapsed}>
+                  <NavItem
+                    to="/app/occupancy"
+                    label="Occupancy"
+                    icon={Gauge}
+                    collapsed={collapsed}
+                  />
+                  <NavItem
+                    to="/app/availability"
+                    label="Availability"
+                    icon={ParkingSquare}
+                    collapsed={collapsed}
+                  />
+                  <NavItem
+                    to="/app/reservations"
+                    label="Reservations"
+                    icon={CalendarDays}
+                    collapsed={collapsed}
+                  />
+                </NavGroup>
+              )}
+              {management && (
+                <NavGroup label="Management" collapsed={collapsed}>
+                  <NavItem
+                    to="/app/facilities"
+                    label="Facilities"
+                    icon={Warehouse}
+                    collapsed={collapsed}
+                  />
+                  <NavItem
+                    to="/app/permits"
+                    label="Permits"
+                    icon={TicketCheck}
+                    collapsed={collapsed}
+                  />
+                  <NavItem
+                    to="/app/override"
+                    label="Override"
+                    icon={SlidersHorizontal}
+                    collapsed={collapsed}
+                  />
+                  {role === 'admin' && (
+                    <NavItem
+                      to="/app/staff"
+                      label="Staff"
+                      icon={UserCog}
+                      collapsed={collapsed}
+                    />
+                  )}
+                </NavGroup>
+              )}
+              {management && (
+                <NavGroup label="Insights" collapsed={collapsed}>
+                  <NavItem
+                    to="/app/reports"
+                    label="Reports"
+                    icon={BarChart3}
+                    collapsed={collapsed}
+                  />
+                </NavGroup>
+              )}
+              {!facilitiesLoading && facilities.length === 0 && (
+                <NavGroup label="Setup" collapsed={collapsed}>
+                  <NavItem
+                    to="/app/onboarding"
+                    label="Onboarding"
+                    icon={Sparkles}
+                    collapsed={collapsed}
+                  />
+                </NavGroup>
+              )}
+            </div>
           )}
         >
           <Outlet />
@@ -254,6 +282,7 @@ function NavGroup({
 type AppPath =
   | '/app'
   | '/app/booking/manifest'
+  | '/app/booking/new'
   | '/app/onboarding'
   | '/app/staff'
   | '/app/facilities'

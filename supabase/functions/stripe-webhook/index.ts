@@ -1,16 +1,24 @@
-import type Stripe from 'npm:stripe@^22'
+import type Stripe from 'npm:stripe@22.6.0'
 import {
   ConfigurationError,
   errorResponse,
-  isUuid,
   jsonResponse,
 } from '../_shared/http.ts'
 import {
   getStripeClient,
   getStripeWebhookSecret,
-  stripeObjectId,
   Stripe as StripeRuntime,
 } from '../_shared/stripe.ts'
+// Payload reading lives in a Stripe-SDK-free module so it can be unit-tested
+// under node; see stripe-payload.test.ts.
+import {
+  currencyOrNull,
+  integerOrNull,
+  metadataUuid,
+  normalizeInvoice,
+  stripeObjectId,
+  unixTimestamp,
+} from '../_shared/stripe-payload.ts'
 import { getAdminClient } from '../_shared/supabase.ts'
 import { issueReceiptForPayment } from '../_shared/receipt.ts'
 
@@ -36,6 +44,11 @@ const handledEventTypes = new Set([
   'customer.subscription.updated',
   'customer.subscription.deleted',
   'invoice.payment_failed',
+  'invoice.payment_succeeded',
+  // The superset of payment_succeeded: it ALSO fires when an invoice is marked
+  // paid out-of-band, which payment_succeeded never reports. Without it, money
+  // collected outside Stripe was booked nowhere and raised no error.
+  'invoice.paid',
 ])
 
 const cryptoProvider = StripeRuntime.createSubtleCryptoProvider()
@@ -68,6 +81,29 @@ Deno.serve(async (request) => {
 
     if (!handledEventTypes.has(event.type)) {
       return jsonResponse({ received: true, ignored: true }, 200, false)
+    }
+
+    // A settled subscription invoice is the only event that books permit money,
+    // so it goes to its own recorder rather than the permit STATE processor.
+    //
+    // BOTH events route here, and a normal payment therefore arrives TWICE --
+    // Stripe sends invoice.paid and invoice.payment_succeeded for every
+    // successful payment, carrying identical invoice data under DIFFERENT event
+    // ids. The processed_stripe_events claim does not collapse them; unique
+    // permit_payments.stripe_invoice_id does, so the second delivery returns
+    // duplicate_invoice and writes neither a payment row nor an audit row.
+    //
+    // Stripe recommends listening to invoice.paid INSTEAD of
+    // payment_succeeded. Deliberately not done: nothing in this repository can
+    // see which events the Dashboard endpoint actually subscribes to, and
+    // dropping payment_succeeded against an endpoint that does not send
+    // invoice.paid would silently stop all permit revenue -- the same failure
+    // shape being fixed here. Subscribing to both degrades safely instead.
+    if (
+      event.type === 'invoice.payment_succeeded' ||
+      event.type === 'invoice.paid'
+    ) {
+      return await processPaidInvoice(event)
     }
 
     if (
@@ -110,6 +146,21 @@ Deno.serve(async (request) => {
 
     const result = data && typeof data === 'object' ? data : null
 
+    // A charge with no public.payments row behind it is not a reservation
+    // payment. 20260905000000 made that answer instead of raising; now it is
+    // also the hand-off point, because a permit refund lands here: permit money
+    // lives in permit_payments and its charge can never resolve above.
+    if (
+      (result as Record<string, unknown> | null)?.outcome ===
+      'payment_not_found'
+    ) {
+      if (normalized.eventType === 'charge.refunded')
+        return await processPermitRefund(event, normalized)
+      console.warn(
+        `Stripe ${normalized.eventType} matched no ParkOS payment; acknowledged without applying.`,
+      )
+    }
+
     // A newly-succeeded reservation payment gets an itemized receipt. Best-effort
     // and after the payment is committed: a receipt failure must not 500 (Stripe
     // would retry the already-settled payment). issueReceiptForPayment is
@@ -124,7 +175,10 @@ Deno.serve(async (request) => {
       const reservationId = (result as Record<string, unknown>).reservation_id
       if (typeof paymentId === 'string' && typeof reservationId === 'string') {
         try {
-          await issueReceiptForPayment(getAdminClient(), { paymentId, reservationId })
+          await issueReceiptForPayment(getAdminClient(), {
+            paymentId,
+            reservationId,
+          })
         } catch {
           console.error('Receipt generation failed after a succeeded payment.')
         }
@@ -170,14 +224,11 @@ async function processSubscriptionEvent(event: Stripe.Event) {
     periodEnd = unixTimestamp(item?.current_period_end)
     reason = subscription.cancellation_details?.comment ?? null
   } else {
-    const invoice = event.data.object as unknown as Record<string, unknown>
-    const parent = objectOrNull(invoice.parent)
-    const details = objectOrNull(parent?.subscription_details)
-    subscriptionId = stripeObjectId(details?.subscription ?? invoice.subscription)
-    const metadata = objectOrNull(details?.metadata)
-    permitId = metadataUuid(
-      typeof metadata?.permit_id === 'string' ? metadata.permit_id : undefined,
+    const invoice = normalizeInvoice(
+      event.data.object as unknown as Record<string, unknown>,
     )
+    subscriptionId = invoice.subscriptionId
+    permitId = invoice.permitId
   }
 
   if (!permitId && !subscriptionId) {
@@ -199,7 +250,9 @@ async function processSubscriptionEvent(event: Stripe.Event) {
     },
   )
   if (error) {
-    console.error('Atomic Stripe subscription processing failed; Stripe should retry.')
+    console.error(
+      'Atomic Stripe subscription processing failed; Stripe should retry.',
+    )
     return errorResponse(
       'Subscription event processing is temporarily unavailable.',
       500,
@@ -210,7 +263,107 @@ async function processSubscriptionEvent(event: Stripe.Event) {
   return jsonResponse(
     {
       received: true,
-      processed: result && 'processed' in result ? result.processed === true : true,
+      processed:
+        result && 'processed' in result ? result.processed === true : true,
+    },
+    200,
+    false,
+  )
+}
+
+// The second half of the charge.refunded route: the charge did not belong to a
+// reservation, so try the permit ledger before giving up. Resolution is by
+// PaymentIntent id -- charge.refunded carries the CHARGE's metadata, never the
+// refund's, so the permit_payment_id the refund endpoint attached is not
+// readable here. Still answers 200 on a miss: an unresolvable charge must never
+// put this endpoint back into a retry loop (20260905000000).
+async function processPermitRefund(
+  event: Stripe.Event,
+  normalized: NormalizedStripeEvent,
+) {
+  const { data, error } = await getAdminClient().rpc('record_permit_refund', {
+    p_event_id: event.id,
+    p_stripe_payment_intent_id: normalized.paymentIntentId,
+    p_amount_cents: normalized.amountCents,
+    p_amount_refunded_cents: normalized.amountRefundedCents,
+  })
+
+  if (error) {
+    console.error('Permit refund recording failed; Stripe should retry.')
+    return errorResponse(
+      'Payment event processing is temporarily unavailable.',
+      500,
+      false,
+    )
+  }
+
+  const result =
+    data && typeof data === 'object' ? (data as Record<string, unknown>) : null
+  const outcome = result?.outcome
+
+  // Both are deliberate 200s. 'permit_payment_not_found' is a charge belonging
+  // to neither ledger; 'partial_refund_not_supported' is a Dashboard partial
+  // against a permit, which v1 does not record. Each is logged because each
+  // means money moved in Stripe that ParkOS did not write down.
+  if (outcome === 'permit_payment_not_found')
+    console.warn(
+      'Stripe charge.refunded matched no ParkOS payment; acknowledged without applying.',
+    )
+  else if (outcome === 'partial_refund_not_supported')
+    console.warn(
+      'A partial permit refund was not recorded; ParkOS records full reversals only.',
+    )
+
+  return jsonResponse(
+    { received: true, processed: result?.processed === true },
+    200,
+    false,
+  )
+}
+
+async function processPaidInvoice(event: Stripe.Event) {
+  const invoice = normalizeInvoice(
+    event.data.object as unknown as Record<string, unknown>,
+  )
+
+  // Deliberately NOT the 400 its sibling returns for a missing identifier. This
+  // endpoint receives every paid invoice on the Stripe account, and an invoice
+  // with no ParkOS subscription behind it is not a malformed payload -- it is
+  // simply not ours. A 400 here would make Stripe retry, and then alert, on
+  // somebody else's invoice.
+  if (!invoice.permitId && !invoice.subscriptionId) {
+    return jsonResponse({ received: true, ignored: true }, 200, false)
+  }
+  if (!invoice.invoiceId) {
+    console.error('A paid Stripe invoice arrived with no invoice id.')
+    return errorResponse('Unsupported Stripe invoice payload.', 400, false)
+  }
+
+  const { data, error } = await getAdminClient().rpc('record_permit_payment', {
+    p_event_id: event.id,
+    p_permit_id: invoice.permitId,
+    p_stripe_subscription_id: invoice.subscriptionId,
+    p_stripe_invoice_id: invoice.invoiceId,
+    p_amount_cents: invoice.amountPaidCents,
+    p_currency: invoice.currency,
+    p_stripe_payment_intent_id: invoice.paymentIntentId,
+    p_paid: invoice.paid,
+  })
+
+  if (error) {
+    console.error('Permit payment recording failed; Stripe should retry.')
+    return errorResponse(
+      'Payment event processing is temporarily unavailable.',
+      500,
+      false,
+    )
+  }
+  const result = data && typeof data === 'object' ? data : null
+  return jsonResponse(
+    {
+      received: true,
+      processed:
+        result && 'processed' in result ? result.processed === true : true,
     },
     200,
     false,
@@ -268,26 +421,4 @@ function normalizeEvent(event: Stripe.Event): NormalizedStripeEvent | null {
   }
 
   return null
-}
-
-function metadataUuid(value: string | undefined) {
-  return isUuid(value ?? null) ? value : null
-}
-
-function integerOrNull(value: number | null | undefined) {
-  return Number.isInteger(value) ? (value as number) : null
-}
-
-function currencyOrNull(value: string | null | undefined) {
-  return value && /^[A-Za-z]{3}$/.test(value) ? value.toUpperCase() : null
-}
-
-function unixTimestamp(value: number | null | undefined) {
-  return Number.isInteger(value) ? new Date((value as number) * 1_000).toISOString() : null
-}
-
-function objectOrNull(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === 'object'
-    ? (value as Record<string, unknown>)
-    : null
 }

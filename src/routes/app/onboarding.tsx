@@ -11,16 +11,12 @@ import {
 import { Input } from '@/components/ui/input'
 import { PageSpinner } from '@/components/ui/Spinner'
 import { useRole } from '@/hooks/useRole'
+import { isValidIanaTimeZone } from '@/lib/facility-time'
 import { supabase } from '@/lib/supabase'
 import { Field } from '@/routes/login'
 
 type SpaceType =
-  | 'standard'
-  | 'compact'
-  | 'accessible'
-  | 'ev'
-  | 'oversized'
-  | 'motorcycle'
+  'standard' | 'compact' | 'accessible' | 'ev' | 'oversized' | 'motorcycle'
 
 type SpaceBatch = {
   id: string
@@ -65,7 +61,9 @@ function Onboarding() {
       <Card className="mx-auto max-w-lg">
         <CardHeader>
           <CardTitle>Onboarding unavailable</CardTitle>
-          <CardDescription>An administrator or manager role is required.</CardDescription>
+          <CardDescription>
+            An administrator or manager role is required.
+          </CardDescription>
         </CardHeader>
       </Card>
     )
@@ -75,7 +73,9 @@ function Onboarding() {
     event.preventDefault()
     setError(null)
     if (!zoneName.trim() || !prefix.trim() || startingNumber < 0 || count < 1) {
-      setError('Enter a zone, prefix, starting number, and positive space count.')
+      setError(
+        'Enter a zone, prefix, starting number, and positive space count.',
+      )
       return
     }
 
@@ -99,6 +99,12 @@ function Onboarding() {
   async function finish() {
     if (batches.length === 0) {
       setError('Add at least one space batch before finishing.')
+      return
+    }
+    if (!isValidIanaTimeZone(timezone.trim())) {
+      setError(
+        'Enter an IANA timezone such as America/Los_Angeles, not PST or EST.',
+      )
       return
     }
 
@@ -143,26 +149,44 @@ function Onboarding() {
     <div className="mx-auto max-w-3xl space-y-6">
       <div>
         <p className="text-sm font-medium text-primary">Step {step} of 3</p>
-        <h1 className="text-3xl font-semibold tracking-tight">Set up your first facility</h1>
+        <h1 className="text-3xl font-semibold tracking-tight">
+          Set up your first facility
+        </h1>
       </div>
 
       {step === 1 && (
         <Card>
           <CardHeader>
             <CardTitle>Facility details</CardTitle>
-            <CardDescription>Tell ParkOS where this parking operation lives.</CardDescription>
+            <CardDescription>
+              Tell ParkOS where this parking operation lives.
+            </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             <Field label="Facility name">
-              <Input required value={facilityName} onChange={(event) => setFacilityName(event.target.value)} />
+              <Input
+                required
+                value={facilityName}
+                onChange={(event) => setFacilityName(event.target.value)}
+              />
             </Field>
             <Field label="Address">
-              <Input value={address} onChange={(event) => setAddress(event.target.value)} />
+              <Input
+                value={address}
+                onChange={(event) => setAddress(event.target.value)}
+              />
             </Field>
             <Field label="IANA timezone">
-              <Input required value={timezone} onChange={(event) => setTimezone(event.target.value)} />
+              <Input
+                required
+                value={timezone}
+                onChange={(event) => setTimezone(event.target.value)}
+              />
             </Field>
-            <Button disabled={!facilityName.trim() || !timezone.trim()} onClick={() => setStep(2)}>
+            <Button
+              disabled={!facilityName.trim() || !timezone.trim()}
+              onClick={() => setStep(2)}
+            >
               Continue
             </Button>
           </CardContent>
@@ -178,14 +202,26 @@ function Onboarding() {
           <CardContent className="space-y-4">
             <div className="grid gap-4 sm:grid-cols-2">
               <Field label="Open">
-                <Input type="time" required value={openTime} onChange={(event) => setOpenTime(event.target.value)} />
+                <Input
+                  type="time"
+                  required
+                  value={openTime}
+                  onChange={(event) => setOpenTime(event.target.value)}
+                />
               </Field>
               <Field label="Close">
-                <Input type="time" required value={closeTime} onChange={(event) => setCloseTime(event.target.value)} />
+                <Input
+                  type="time"
+                  required
+                  value={closeTime}
+                  onChange={(event) => setCloseTime(event.target.value)}
+                />
               </Field>
             </div>
             <div className="flex gap-2">
-              <Button variant="outline" onClick={() => setStep(1)}>Back</Button>
+              <Button variant="outline" onClick={() => setStep(1)}>
+                Back
+              </Button>
               <Button onClick={() => setStep(3)}>Continue</Button>
             </div>
           </CardContent>
@@ -197,24 +233,55 @@ function Onboarding() {
           <Card>
             <CardHeader>
               <CardTitle>Bulk-generate spaces</CardTitle>
-              <CardDescription>Add one batch per level, zone, or space type.</CardDescription>
+              <CardDescription>
+                Add one batch per level, zone, or space type.
+              </CardDescription>
             </CardHeader>
             <CardContent>
               <form className="grid gap-4 sm:grid-cols-2" onSubmit={addBatch}>
                 <Field label="Zone or level name">
-                  <Input required value={zoneName} onChange={(event) => setZoneName(event.target.value)} />
+                  <Input
+                    required
+                    value={zoneName}
+                    onChange={(event) => setZoneName(event.target.value)}
+                  />
                 </Field>
                 <Field label="Space prefix">
-                  <Input required value={prefix} onChange={(event) => setPrefix(event.target.value)} />
+                  <Input
+                    required
+                    value={prefix}
+                    onChange={(event) => setPrefix(event.target.value)}
+                  />
                 </Field>
                 <Field label="Starting number">
-                  <Input type="number" min={0} required value={startingNumber} onChange={(event) => setStartingNumber(Number(event.target.value))} />
+                  <Input
+                    type="number"
+                    min={0}
+                    required
+                    value={startingNumber}
+                    onChange={(event) =>
+                      setStartingNumber(Number(event.target.value))
+                    }
+                  />
                 </Field>
                 <Field label="Count">
-                  <Input type="number" min={1} max={1000} required value={count} onChange={(event) => setCount(Number(event.target.value))} />
+                  <Input
+                    type="number"
+                    min={1}
+                    max={1000}
+                    required
+                    value={count}
+                    onChange={(event) => setCount(Number(event.target.value))}
+                  />
                 </Field>
                 <Field label="Space type">
-                  <select className={selectClass} value={spaceType} onChange={(event) => setSpaceType(event.target.value as SpaceType)}>
+                  <select
+                    className={selectClass}
+                    value={spaceType}
+                    onChange={(event) =>
+                      setSpaceType(event.target.value as SpaceType)
+                    }
+                  >
                     <option value="standard">Standard</option>
                     <option value="compact">Compact</option>
                     <option value="accessible">Accessible</option>
@@ -224,7 +291,9 @@ function Onboarding() {
                   </select>
                 </Field>
                 <div className="flex items-end">
-                  <Button type="submit" variant="outline">Add batch</Button>
+                  <Button type="submit" variant="outline">
+                    Add batch
+                  </Button>
                 </div>
               </form>
             </CardContent>
@@ -232,17 +301,31 @@ function Onboarding() {
 
           {batches.length > 0 && (
             <Card>
-              <CardHeader><CardTitle>Planned batches</CardTitle></CardHeader>
+              <CardHeader>
+                <CardTitle>Planned batches</CardTitle>
+              </CardHeader>
               <CardContent className="space-y-3">
                 {batches.map((batch) => (
-                  <div key={batch.id} className="flex items-center justify-between gap-4 rounded-lg border p-3">
+                  <div
+                    key={batch.id}
+                    className="flex items-center justify-between gap-4 rounded-lg border p-3"
+                  >
                     <div>
                       <p className="font-medium">{batch.zoneName}</p>
                       <p className="text-sm text-muted-foreground">
-                        {batch.count} {batch.spaceType.replace('_', ' ')} spaces · {batch.prefix}{batch.startingNumber}
+                        {batch.count} {batch.spaceType.replace('_', ' ')} spaces
+                        · {batch.prefix}
+                        {batch.startingNumber}
                       </p>
                     </div>
-                    <Button variant="ghost" onClick={() => setBatches((current) => current.filter((item) => item.id !== batch.id))}>
+                    <Button
+                      variant="ghost"
+                      onClick={() =>
+                        setBatches((current) =>
+                          current.filter((item) => item.id !== batch.id),
+                        )
+                      }
+                    >
                       Remove
                     </Button>
                   </div>
@@ -253,8 +336,13 @@ function Onboarding() {
 
           {error && <p className="text-sm text-destructive">{error}</p>}
           <div className="flex gap-2">
-            <Button variant="outline" onClick={() => setStep(2)}>Back</Button>
-            <Button disabled={submitting || batches.length === 0} onClick={finish}>
+            <Button variant="outline" onClick={() => setStep(2)}>
+              Back
+            </Button>
+            <Button
+              disabled={submitting || batches.length === 0}
+              onClick={finish}
+            >
               {submitting ? 'Creating facility…' : 'Finish setup'}
             </Button>
           </div>

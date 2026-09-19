@@ -142,11 +142,13 @@ against this file before being added:
 - Gate hardware integration
 - Native mobile apps
 
-## In-person payment collection: recording implemented, reporting pending
+## In-person payment collection and reporting implemented
 
 Decision #8 and migration `20260825010000_booth_payments.sql` resolve the structural collection
-gap in the schema and application code. The migration still has to be applied explicitly in each
-environment; committing it does not deploy it.
+gap in the schema and application code. Migration `20260826000000_booth_revenue_reporting.sql`
+adds booth cash and card-terminal collections to the dashboard and revenue reports without
+double-counting mixed-payment reservations. Migrations still have to be applied explicitly in each
+environment; committing them does not deploy them.
 
 Walk-in and drive-up parking had no payment collection path. Three structural blockers, each
 sufficient on its own:
@@ -169,29 +171,88 @@ It now prices the overstay itself and can collect the balance in the same transa
 The booth surface is `/checkin/{booking_code}` — the URL already printed as a QR on every
 receipt, which until now had no route behind it.
 
-One functional gap remains: `facility_dashboard_summary` and the `report_*` revenue functions
-still sum only Stripe-backed `payments`. Until a follow-up reporting migration includes
-`booth_payments` without double-counting mixed-payment reservations, cash and card-terminal money
-is recorded and auditable but absent from dashboard and report revenue totals.
+`facility_dashboard_summary` and the `report_*` revenue functions combine Stripe-backed
+`payments` with `booth_payments`, while exposing separate online, booth-cash, and booth-card
+breakdowns. Cash and card-terminal collections are therefore included in dashboard and report
+revenue totals.
 
-## Known gap: permit subscription payments are not recorded
+## Permit subscription payment ledger
 
-Monthly permits bill successfully through Stripe, and ParkOS keeps no record of the money.
+Monthly permit invoices use their own `permit_payments` ledger. They do not weaken the invariants
+on reservation Checkout rows in `payments`: a recurring invoice has no reservation and no Checkout
+Session, while both identifiers remain required there.
 
-- `payments.reservation_id` is `NOT NULL`, so a permit charge cannot be inserted into that table
-  at all.
-- The stripe-webhook's `handledEventTypes` set includes `invoice.payment_failed` but not
-  `invoice.payment_succeeded`. A failed permit charge is noticed; a successful one is dropped.
+The signature-verified Stripe webhook handles both `invoice.payment_succeeded` and `invoice.paid`,
+routing each to the service-role-only `record_permit_payment` function. That function resolves the permit from the
+invoice's permit metadata or Stripe subscription id, records the amount Stripe actually collected,
+and writes an audit entry in one transaction. Browser roles cannot write the table or execute the
+recorder.
 
-There is no permit invoice or payment table anywhere. Permits carry a `stripe_subscription_id`,
-a `monthly_rate_cents`, and period bounds — an expectation of billing, never a record of it.
-On parkos-dev, 4 active permit subscriptions bill monthly with zero corresponding record.
+Both events are subscribed because only `invoice.paid` fires when an invoice is marked paid
+**out of band** — a wire, a cheque, cash handed over. `invoice.payment_succeeded` is never sent for
+those, so before this they collected money and recorded nothing, raising no error: the same silent
+shape as the Basil `paid` removal. Stripe recommends listening to `invoice.paid` _instead of_
+`invoice.payment_succeeded`; ParkOS deliberately keeps both, because nothing in this repository can
+see which events the Dashboard endpoint subscribes to (see "Stripe API version pinning") and
+dropping `payment_succeeded` against an endpoint that does not send `invoice.paid` would silently
+stop all permit revenue. Subscribing to both fails safe in the other direction.
 
-This is separate from the in-person reporting gap above, and arguably more urgent. Walk-in money
-now has a recording path; permit billing works, is actively selling, and generates real revenue
-that goes wholly untracked — so the operator cannot reconcile, report on, or audit it. Any revenue
-report is understated by exactly the amount permits bring in.
+That makes double delivery routine rather than exceptional: a normal payment arrives on **both**
+events, carrying identical invoice data under **different** event ids. Idempotency exists at two
+levels and the second one is what carries this case: `processed_stripe_events.event_id` collapses
+ordinary webhook retries but _cannot_ collapse two distinct events, and unique
+`permit_payments.stripe_invoice_id` prevents a resent invoice under a different event id from
+becoming duplicate revenue. The second delivery returns `duplicate_invoice` and writes neither a
+payment row nor an audit entry. Concurrent delivery of the two events serializes on the permit's
+`FOR UPDATE` lock, which `record_permit_payment` takes before any write — measured at 11.0s of real
+lock wait in a two-connection test, after which the blocked call returned `duplicate_invoice` and
+the ledger held one row. A later billing period has a different invoice id and is
+therefore a separate ledger row. Payments that arrive after a permit was cancelled are still
+recorded because the ledger describes money Stripe collected, not whether collection should have
+happened.
 
-Closing it needs two things: handling `invoice.payment_succeeded` in the webhook, and somewhere to
-put the result — either a dedicated permit payments table or a relaxed `payments` schema that
-admits a row belonging to a permit rather than a reservation.
+The revenue-reporting functions aggregate `permit_payments` as of
+`20260902000000_permit_revenue_reporting.sql`. `facility_dashboard_summary`,
+`report_revenue_by_period`, `report_revenue_by_space_type` and `report_revenue_split` each gained a
+permit branch, so an operator total is no longer understated by the permit take. Permits do not hang
+off a reservation the way booth payments do — they carry `facility_id` and `space_id` directly — so
+the permit branch joins `permit_payments -> permits -> facilities` and never touches `reservations`.
+A permit counts against the type of the space it holds.
+
+Only `succeeded` permit payments count, matching how the `payments` branches filter. `refunded_count`
+stays reservation-only: `permit_payments.status` is constrained to `succeeded` alone, because the
+table is written only from settled invoices and a failed invoice suspends the permit while
+recording no money. `report_revenue_split`'s `permit` row previously returned NULL with
+`recorded = false` and a note pointing here; it now returns real figures with `recorded = true`, which
+is visible to anyone comparing a report from before that migration.
+
+## Stripe API version pinning
+
+Edge functions import the Stripe SDK as `npm:stripe@22.6.0` — an exact version, in all four files
+that import it. There is no `deno.lock`, so a range would be re-resolved on every deploy. Within
+`^22` the range's own API version already moved twice (`22.0.0` ships `2026-03-25.dahlia`, `22.6.0`
+ships `2026-08-26.dahlia`, and the next release carries `2026-08-26.preview`), so a caret range moved
+the wire protocol, not just the library.
+
+`getStripeClient` also sets `apiVersion: '2026-08-26.dahlia'` explicitly. stripe-node does not fall
+back to the account default when the option is omitted — it sends its own baked-in `ApiVersion`
+either way — so this is a no-op against the pinned SDK by design. It exists so the code states what
+it expects instead of inheriting it, and so bumping the SDK surfaces a version change as a visible
+diff rather than a silent one.
+
+**These two pins govern outbound calls only.** A webhook body is rendered at the API version
+configured on the ENDPOINT in the Stripe Dashboard, which is a separate setting the SDK cannot read
+or influence. Nothing in this repository can tell you what that version is, and no check here will
+fail if it moves. That is not an oversight — it is the split that produced the Basil bug, where a
+`2025-03-31.basil` endpoint stopped sending the top-level `paid` field and every permit invoice
+began failing `INVOICE_NOT_PAID` with no error anywhere upstream.
+
+The two versions must therefore be kept aligned deliberately, by a human, whenever either moves:
+
+- Changing the endpoint version in the Dashboard requires re-checking the payload readers.
+- Bumping the pinned SDK requires re-checking the endpoint version alongside it.
+
+Until that alignment is machine-checkable, the real defence on the inbound path stays where it is:
+the readers in `supabase/functions/_shared/stripe-payload.ts` accept both the pre-Basil and
+post-Basil shapes of every field ParkOS depends on, and `stripe-payload.test.ts` exercises both
+against recorded payloads. Pinning the SDK gives that path no protection whatsoever.

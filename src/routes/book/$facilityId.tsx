@@ -29,7 +29,14 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { useAuth } from '@/hooks/useAuth'
-import { defaultLocalDatetime, dollars } from '@/lib/format'
+import { normalizePlate, validatePlate } from '@/lib/booking-validation'
+import {
+  FacilityTimeError,
+  formatInstantForFacility,
+  instantToFacilityInput,
+  parseFacilityWindow,
+} from '@/lib/facility-time'
+import { dollars } from '@/lib/format'
 import { spaceTypes, type SpaceType } from '@/lib/holds'
 import { supabase } from '@/lib/supabase'
 import { Field } from '@/routes/login'
@@ -38,7 +45,11 @@ type PublicFacility = {
   name: string
   address: string | null
   timezone: string
-  operating_hours: { open: string; close: string } | null
+  operating_hours:
+    | { type: 'daily'; open: string; close: string }
+    | { type: '24_hours' }
+    | { type: 'weekly'; days: Record<string, unknown> }
+    | null
 }
 
 type CustomerInfo = { customer_id: string; org_id: string; full_name: string }
@@ -60,7 +71,7 @@ type AvailableSpace = {
 
 type Confirmation = {
   reservation_id: string
-  booking_code: string | null
+  booking_code: string
   total_cents: number
   price_breakdown: QuoteBreakdown
   space_number: string
@@ -108,8 +119,8 @@ function BookingPage() {
   const [vehicleError, setVehicleError] = useState<string | null>(null)
 
   // search + booking
-  const [start, setStart] = useState(() => defaultLocalDatetime(3600_000))
-  const [end, setEnd] = useState(() => defaultLocalDatetime(5 * 3600_000))
+  const [start, setStart] = useState('')
+  const [end, setEnd] = useState('')
   const [typeFilter, setTypeFilter] = useState(ANY)
   const [results, setResults] = useState<AvailableSpace[] | null>(null)
   const [quotes, setQuotes] = useState<Map<string, QuoteBreakdown | string>>(
@@ -127,7 +138,32 @@ function BookingPage() {
       .then(({ data, error: loadError }) => {
         if (!active) return
         if (loadError) setError(loadError.message)
-        else setFacility(((data as PublicFacility[]) ?? [])[0] ?? null)
+        else {
+          const loadedFacility = ((data as PublicFacility[]) ?? [])[0] ?? null
+          setFacility(loadedFacility)
+          if (loadedFacility) {
+            try {
+              setStart(
+                instantToFacilityInput(
+                  new Date(Date.now() + 3_600_000),
+                  loadedFacility.timezone,
+                ),
+              )
+              setEnd(
+                instantToFacilityInput(
+                  new Date(Date.now() + 5 * 3_600_000),
+                  loadedFacility.timezone,
+                ),
+              )
+            } catch (caught) {
+              setError(
+                caught instanceof FacilityTimeError
+                  ? caught.message
+                  : 'The facility timezone could not be loaded.',
+              )
+            }
+          }
+        }
         setFacilityLoading(false)
       })
     return () => {
@@ -204,7 +240,9 @@ function BookingPage() {
         return
       }
       if (!data.session) {
-        setAuthMessage('Check your email to confirm your account, then log in here.')
+        setAuthMessage(
+          'Check your email to confirm your account, then log in here.',
+        )
         setMode('login')
         return
       }
@@ -226,7 +264,8 @@ function BookingPage() {
     setDetailsBusy(true)
     setDetailsError(null)
     const info = await ensureCustomer({
-      fullName: fullName.trim() || (user?.user_metadata?.full_name as string) || '',
+      fullName:
+        fullName.trim() || (user?.user_metadata?.full_name as string) || '',
       email: user?.email ?? email,
       phone,
     })
@@ -237,6 +276,11 @@ function BookingPage() {
   async function addVehicle(event: FormEvent) {
     event.preventDefault()
     if (!customer) return
+    const plateError = validatePlate(plate)
+    if (plateError) {
+      setVehicleError(plateError)
+      return
+    }
     setVehicleError(null)
     const [make, ...modelParts] = makeModel.trim().split(' ')
     const { data, error: insertError } = await supabase
@@ -244,7 +288,7 @@ function BookingPage() {
       .insert({
         org_id: customer.org_id,
         customer_id: customer.customer_id,
-        license_plate: plate.trim().toUpperCase(),
+        license_plate: normalizePlate(plate),
         make: make || null,
         model: modelParts.join(' ') || null,
         color: color.trim() || null,
@@ -266,14 +310,16 @@ function BookingPage() {
 
   async function search(event: FormEvent) {
     event.preventDefault()
-    const startDate = new Date(start)
-    const endDate = new Date(end)
-    if (
-      Number.isNaN(startDate.getTime()) ||
-      Number.isNaN(endDate.getTime()) ||
-      endDate <= startDate
-    ) {
-      setBookError('Enter a valid window: the end must be after the start.')
+    if (!facility) return
+    let window
+    try {
+      window = parseFacilityWindow(start, end, facility.timezone)
+    } catch (caught) {
+      setBookError(
+        caught instanceof FacilityTimeError
+          ? caught.message
+          : 'Enter a valid arrival and departure.',
+      )
       return
     }
     setSearching(true)
@@ -284,8 +330,8 @@ function BookingPage() {
       'get_public_availability',
       {
         p_facility_id: facilityId,
-        p_start: startDate.toISOString(),
-        p_end: endDate.toISOString(),
+        p_start: window.startIso,
+        p_end: window.endIso,
         p_space_type: typeFilter === ANY ? null : typeFilter,
       },
     )
@@ -298,13 +344,25 @@ function BookingPage() {
   }
 
   async function quoteSpace(space: AvailableSpace) {
+    if (!facility) return
+    let window
+    try {
+      window = parseFacilityWindow(start, end, facility.timezone)
+    } catch (caught) {
+      setBookError(
+        caught instanceof FacilityTimeError
+          ? caught.message
+          : 'Enter a valid arrival and departure.',
+      )
+      return
+    }
     setQuotes((current) => new Map(current).set(space.space_id, 'loading'))
     const { data, error: quoteError } = await supabase.rpc(
       'public_quote_reservation',
       {
         p_space_id: space.space_id,
-        p_start: new Date(start).toISOString(),
-        p_end: new Date(end).toISOString(),
+        p_start: window.startIso,
+        p_end: window.endIso,
       },
     )
     setQuotes((current) =>
@@ -316,7 +374,18 @@ function BookingPage() {
   }
 
   async function book(space: AvailableSpace) {
-    if (!customer) return
+    if (!customer || !facility) return
+    let window
+    try {
+      window = parseFacilityWindow(start, end, facility.timezone)
+    } catch (caught) {
+      setBookError(
+        caught instanceof FacilityTimeError
+          ? caught.message
+          : 'Enter a valid arrival and departure.',
+      )
+      return
+    }
     setBookingSpace(space.space_id)
     setBookError(null)
     const { data, error: bookErr } = await supabase.rpc(
@@ -326,8 +395,8 @@ function BookingPage() {
         p_space_id: space.space_id,
         p_customer_id: customer.customer_id,
         p_vehicle_id: vehicleId === NO_VEHICLE ? null : vehicleId,
-        p_start: new Date(start).toISOString(),
-        p_end: new Date(end).toISOString(),
+        p_start: window.startIso,
+        p_end: window.endIso,
       },
     )
     setBookingSpace(null)
@@ -355,12 +424,19 @@ function BookingPage() {
       (mine ?? []) as { reservation_id: string; booking_code: string }[]
     ).find((r) => r.reservation_id === row.reservation_id)
 
+    if (!booked?.booking_code) {
+      setBookError(
+        'The reservation was created, but its booking code could not be loaded. Open My reservations to retrieve it; do not create a duplicate.',
+      )
+      return
+    }
+
     setConfirmation({
       ...row,
-      booking_code: booked?.booking_code ?? null,
+      booking_code: booked.booking_code,
       space_number: space.space_number,
-      start,
-      end,
+      start: window.startIso,
+      end: window.endIso,
     })
   }
 
@@ -373,7 +449,8 @@ function BookingPage() {
           <CardHeader>
             <CardTitle>Facility not found</CardTitle>
             <CardDescription>
-              {error ?? 'This booking link is invalid or the facility is closed.'}
+              {error ??
+                'This booking link is invalid or the facility is closed.'}
             </CardDescription>
           </CardHeader>
         </Card>
@@ -387,31 +464,18 @@ function BookingPage() {
         <Card>
           <CardHeader>
             <CardTitle>You’re booked</CardTitle>
-            <CardDescription>
-              Show this code at the facility.
-            </CardDescription>
+            <CardDescription>Show this code at the facility.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            {confirmation.booking_code ? (
-              <TicketStub
-                status="Confirmed"
-                code={confirmation.booking_code}
-                lines={[
-                  `${facility.name} · Space ${confirmation.space_number}`,
-                  `${new Date(confirmation.start).toLocaleString()} → ${new Date(
-                    confirmation.end,
-                  ).toLocaleString()}`,
-                ]}
-                amount={dollars(confirmation.total_cents)}
-              />
-            ) : (
-              // The code read-back failed. The reservation itself is fine, so
-              // fall back to the ID rather than implying something went wrong.
-              <p className="text-sm">
-                <span className="text-muted-foreground">Reservation:</span>{' '}
-                <span className="font-data">{confirmation.reservation_id}</span>
-              </p>
-            )}
+            <TicketStub
+              status="Confirmed"
+              code={confirmation.booking_code}
+              lines={[
+                `${facility.name} · Space ${confirmation.space_number}`,
+                `${formatInstantForFacility(confirmation.start, facility.timezone)} → ${formatInstantForFacility(confirmation.end, facility.timezone)}`,
+              ]}
+              amount={dollars(confirmation.total_cents)}
+            />
             <BreakdownTable quote={confirmation.price_breakdown} />
             <div className="flex gap-2">
               <Button onClick={() => setConfirmation(null)} variant="outline">
@@ -436,9 +500,7 @@ function BookingPage() {
           </h1>
           <p className="mt-1 text-muted-foreground">
             {facility.address ? `${facility.address} · ` : ''}
-            {facility.operating_hours
-              ? `Open ${facility.operating_hours.open}–${facility.operating_hours.close} (${facility.timezone})`
-              : facility.timezone}
+            {operatingHoursLabel(facility.operating_hours, facility.timezone)}
           </p>
         </div>
         {user && (
@@ -457,7 +519,9 @@ function BookingPage() {
         <Card className="mx-auto w-full max-w-md">
           <CardHeader>
             <CardTitle>
-              {mode === 'signup' ? 'Create an account to book' : 'Log in to book'}
+              {mode === 'signup'
+                ? 'Create an account to book'
+                : 'Log in to book'}
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -506,7 +570,9 @@ function BookingPage() {
                   onChange={(event) => setPassword(event.target.value)}
                 />
               </Field>
-              {authError && <p className="text-sm text-destructive">{authError}</p>}
+              {authError && (
+                <p className="text-sm text-destructive">{authError}</p>
+              )}
               {authMessage && (
                 <p className="text-sm text-muted-foreground">{authMessage}</p>
               )}
@@ -624,7 +690,10 @@ function BookingPage() {
               <CardTitle>Find a space</CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
-              <form className="flex flex-wrap items-end gap-3" onSubmit={search}>
+              <form
+                className="flex flex-wrap items-end gap-3"
+                onSubmit={search}
+              >
                 <Field label="From">
                   <Input
                     type="datetime-local"
@@ -661,7 +730,9 @@ function BookingPage() {
                 </Button>
               </form>
 
-              {bookError && <p className="text-sm text-destructive">{bookError}</p>}
+              {bookError && (
+                <p className="text-sm text-destructive">{bookError}</p>
+              )}
 
               {results !== null &&
                 (results.length === 0 ? (
@@ -779,6 +850,19 @@ function vehicleLabel(vehicle: VehicleRow) {
   return desc
     ? `${vehicle.license_plate ?? '?'} — ${desc}`
     : (vehicle.license_plate ?? 'Vehicle')
+}
+
+function operatingHoursLabel(
+  hours: PublicFacility['operating_hours'],
+  timeZone: string,
+) {
+  if (!hours || hours.type === '24_hours') {
+    return `Open 24 hours (${timeZone})`
+  }
+  if (hours.type === 'daily') {
+    return `Open ${hours.open}–${hours.close} (${timeZone})`
+  }
+  return `Weekly operating schedule (${timeZone})`
 }
 
 function label(value: string) {

@@ -1,4 +1,10 @@
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type FormEvent,
+} from 'react'
 import { toast } from 'sonner'
 import { createFileRoute } from '@tanstack/react-router'
 import { Badge } from '@/components/ui/badge'
@@ -36,13 +42,20 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
+import { useFacility } from '@/hooks/useFacility'
 import { useRole } from '@/hooks/useRole'
 import { edgeFunctionError, friendlyError } from '@/lib/errors'
+import {
+  FacilityTimeError,
+  facilityInputToUtc,
+  instantToFacilityInput,
+} from '@/lib/facility-time'
 import { dollars } from '@/lib/format'
+import { isCancelling, permitCancelOutcome } from '@/lib/permit-cancel'
 import { supabase } from '@/lib/supabase'
 import { Field } from '@/routes/login'
 
-type FacilityOption = { id: string; name: string }
+type FacilityOption = { id: string; name: string; timezone: string }
 type AvailableSpace = { id: string; space_number: string; space_type: string }
 type CustomerOption = { id: string; full_name: string; email: string | null }
 
@@ -50,6 +63,7 @@ type PermitRow = {
   id: string
   facility_id: string
   facility_name: string
+  facility_timezone: string
   space_number: string
   customer_name: string
   monthly_rate_cents: number
@@ -58,6 +72,7 @@ type PermitRow = {
   stripe_subscription_id: string | null
   current_period_start: string | null
   current_period_end: string | null
+  cancellation_requested_at: string | null
 }
 
 const ANY = 'all'
@@ -68,7 +83,11 @@ export const Route = createFileRoute('/app/permits')({
 
 function Permits() {
   const { role, org_id: orgId, loading: roleLoading } = useRole()
-  const [facilities, setFacilities] = useState<FacilityOption[]>([])
+  const {
+    allFacilities: facilities,
+    loading: facilitiesLoading,
+    error: facilitiesError,
+  } = useFacility()
   const [rows, setRows] = useState<PermitRow[]>([])
   const [facilityFilter, setFacilityFilter] = useState(ANY)
   const [loading, setLoading] = useState(true)
@@ -91,7 +110,10 @@ function Permits() {
     setLinkBusyId(null)
     if (linkError || !data?.payment_url) {
       toast.error(
-        await edgeFunctionError(linkError, 'No payment link is available for this permit.'),
+        await edgeFunctionError(
+          linkError,
+          'No payment link is available for this permit.',
+        ),
       )
       return
     }
@@ -101,31 +123,24 @@ function Permits() {
   }
 
   const load = useCallback(async () => {
-    if (!orgId || !allowed) return
+    if (!orgId || !allowed || facilitiesLoading) return
     setLoading(true)
     setError(null)
 
-    const [permitResult, facilityResult] = await Promise.all([
-      supabase
-        .from('permits')
-        .select(
-          'id, facility_id, space_id, customer_id, monthly_rate_cents, currency, status, stripe_subscription_id, current_period_start, current_period_end, created_at',
-        )
-        .eq('org_id', orgId)
-        .is('archived_at', null)
-        .order('created_at', { ascending: false })
-        .limit(500),
-      supabase
-        .from('facilities')
-        .select('id, name')
-        .eq('org_id', orgId)
-        .order('name'),
-    ])
+    const permitResult = await supabase
+      .from('permits')
+      .select(
+        'id, facility_id, space_id, customer_id, monthly_rate_cents, currency, status, stripe_subscription_id, current_period_start, current_period_end, cancellation_requested_at, created_at',
+      )
+      .eq('org_id', orgId)
+      .is('archived_at', null)
+      .order('created_at', { ascending: false })
+      .limit(500)
 
-    if (permitResult.error || facilityResult.error) {
+    if (permitResult.error || facilitiesError) {
       setError(
         friendlyError(
-          permitResult.error ?? facilityResult.error,
+          permitResult.error ?? facilitiesError,
           'Permits could not be loaded. Please try again.',
         ),
       )
@@ -134,9 +149,8 @@ function Permits() {
     }
 
     const permits = permitResult.data ?? []
-    const facilityRows = (facilityResult.data ?? []) as FacilityOption[]
-    setFacilities(facilityRows)
-    const facilityName = new Map(facilityRows.map((f) => [f.id, f.name]))
+    const facilityName = new Map(facilities.map((f) => [f.id, f.name]))
+    const facilityTimezone = new Map(facilities.map((f) => [f.id, f.timezone]))
 
     const spaceIds = [...new Set(permits.map((p) => p.space_id))]
     const customerIds = [...new Set(permits.map((p) => p.customer_id))]
@@ -146,7 +160,10 @@ function Permits() {
         ? supabase.from('spaces').select('id, space_number').in('id', spaceIds)
         : Promise.resolve({ data: [], error: null }),
       customerIds.length
-        ? supabase.from('customers').select('id, full_name').in('id', customerIds)
+        ? supabase
+            .from('customers')
+            .select('id, full_name')
+            .in('id', customerIds)
         : Promise.resolve({ data: [], error: null }),
     ])
 
@@ -161,14 +178,19 @@ function Permits() {
       return
     }
 
-    const spaceNumber = new Map((spaceRes.data ?? []).map((s) => [s.id, s.space_number]))
-    const customerName = new Map((custRes.data ?? []).map((c) => [c.id, c.full_name]))
+    const spaceNumber = new Map(
+      (spaceRes.data ?? []).map((s) => [s.id, s.space_number]),
+    )
+    const customerName = new Map(
+      (custRes.data ?? []).map((c) => [c.id, c.full_name]),
+    )
 
     setRows(
       permits.map((p) => ({
         id: p.id,
         facility_id: p.facility_id,
         facility_name: facilityName.get(p.facility_id) ?? 'Facility',
+        facility_timezone: facilityTimezone.get(p.facility_id) ?? '',
         space_number: spaceNumber.get(p.space_id) ?? '—',
         customer_name: customerName.get(p.customer_id) ?? 'Unknown',
         monthly_rate_cents: p.monthly_rate_cents,
@@ -177,10 +199,11 @@ function Permits() {
         stripe_subscription_id: p.stripe_subscription_id,
         current_period_start: p.current_period_start,
         current_period_end: p.current_period_end,
+        cancellation_requested_at: p.cancellation_requested_at,
       })),
     )
     setLoading(false)
-  }, [orgId, allowed])
+  }, [orgId, allowed, facilities, facilitiesError, facilitiesLoading])
 
   useEffect(() => {
     if (!roleLoading) void Promise.resolve().then(load)
@@ -279,17 +302,30 @@ function Permits() {
                 <TableBody>
                   {visible.map((row) => (
                     <TableRow key={row.id}>
-                      <TableCell className="font-medium">{row.customer_name}</TableCell>
+                      <TableCell className="font-medium">
+                        {row.customer_name}
+                      </TableCell>
                       <TableCell>{row.facility_name}</TableCell>
-                      <TableCell className="tabular-nums">{row.space_number}</TableCell>
+                      <TableCell className="tabular-nums">
+                        {row.space_number}
+                      </TableCell>
                       <TableCell className="text-right tabular-nums">
                         {dollars(row.monthly_rate_cents)} {row.currency}
                       </TableCell>
                       <TableCell>
-                        <PermitStatusBadge status={row.status} />
+                        <PermitStatusBadge
+                          status={row.status}
+                          cancellationRequestedAt={
+                            row.cancellation_requested_at
+                          }
+                        />
                       </TableCell>
                       <TableCell className="text-muted-foreground">
-                        {billingPeriod(row.current_period_start, row.current_period_end)}
+                        {billingPeriod(
+                          row.current_period_start,
+                          row.current_period_end,
+                          row.facility_timezone,
+                        )}
                       </TableCell>
                       <TableCell className="text-right">
                         <div className="flex justify-end gap-2">
@@ -300,7 +336,9 @@ function Permits() {
                               disabled={linkBusyId === row.id}
                               onClick={() => getPaymentLink(row)}
                             >
-                              {linkBusyId === row.id ? 'Fetching…' : 'Get payment link'}
+                              {linkBusyId === row.id
+                                ? 'Fetching…'
+                                : 'Get payment link'}
                             </Button>
                           )}
                           {row.status !== 'cancelled' && (
@@ -346,7 +384,9 @@ function IssuePermitForm({
   onIssued: () => void
 }) {
   const [facilityId, setFacilityId] = useState(facilities[0]?.id ?? '')
-  const [startDate, setStartDate] = useState(() => todayInputValue())
+  const [startDate, setStartDate] = useState(() =>
+    facilities[0] ? todayInputValue(facilities[0].timezone) : '',
+  )
   const [spaces, setSpaces] = useState<AvailableSpace[] | null>(null)
   const [spaceId, setSpaceId] = useState('')
   const [searching, setSearching] = useState(false)
@@ -361,6 +401,7 @@ function IssuePermitForm({
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [setupUrl, setSetupUrl] = useState<string | null>(null)
+  const facility = facilities.find((option) => option.id === facilityId)
 
   const loadCustomers = useCallback(async () => {
     const { data } = await supabase
@@ -380,19 +421,30 @@ function IssuePermitForm({
   // from the start date onward. Reuse Week 6's availability search with a far
   // horizon to approximate the open-ended window issue_permit will insert.
   async function findSpaces() {
-    if (!facilityId) return
+    if (!facilityId || !facility) return
     setSearching(true)
     setError(null)
     setSpaces(null)
     setSpaceId('')
-    const start = startAtIso(startDate)
-    const horizon = new Date(start)
-    horizon.setFullYear(horizon.getFullYear() + 50)
-    const { data, error: searchError } = await supabase.rpc('find_available_spaces', {
-      p_facility_id: facilityId,
-      p_start: start,
-      p_end: horizon.toISOString(),
-    })
+    let start
+    try {
+      start = startAtIso(startDate, facility.timezone)
+    } catch (caught) {
+      setSearching(false)
+      setError(
+        caught instanceof FacilityTimeError
+          ? caught.message
+          : 'Enter a valid permit start date.',
+      )
+      return
+    }
+    const { data, error: searchError } = await supabase.rpc(
+      'find_available_spaces_for_permit',
+      {
+        p_facility_id: facilityId,
+        p_start: start,
+      },
+    )
     setSearching(false)
     if (searchError) {
       setError(friendlyError(searchError, 'Could not load available spaces.'))
@@ -429,12 +481,23 @@ function IssuePermitForm({
   async function submit(event: FormEvent) {
     event.preventDefault()
     const cents = Math.round(Number(rateDollars) * 100)
-    if (!facilityId || !spaceId || !customerId) {
+    if (!facilityId || !facility || !spaceId || !customerId) {
       setError('Pick a facility, space, and customer first.')
       return
     }
     if (!Number.isFinite(cents) || cents <= 0) {
       setError('Enter a monthly rate greater than zero.')
+      return
+    }
+    let permitStart
+    try {
+      permitStart = startAtIso(startDate, facility.timezone)
+    } catch (caught) {
+      setError(
+        caught instanceof FacilityTimeError
+          ? caught.message
+          : 'Enter a valid permit start date.',
+      )
       return
     }
 
@@ -443,15 +506,18 @@ function IssuePermitForm({
 
     // 1. Create the permit + its open-ended hold atomically (7-arg signature:
     //    org, facility, space, customer, start, monthly_rate_cents, currency).
-    const { data: permit, error: issueError } = await supabase.rpc('issue_permit', {
-      p_org_id: orgId,
-      p_facility_id: facilityId,
-      p_space_id: spaceId,
-      p_customer_id: customerId,
-      p_start: startAtIso(startDate),
-      p_monthly_rate_cents: cents,
-      p_currency: 'USD',
-    })
+    const { data: permit, error: issueError } = await supabase.rpc(
+      'issue_permit',
+      {
+        p_org_id: orgId,
+        p_facility_id: facilityId,
+        p_space_id: spaceId,
+        p_customer_id: customerId,
+        p_start: permitStart,
+        p_monthly_rate_cents: cents,
+        p_currency: 'USD',
+      },
+    )
     if (issueError || !permit) {
       setSubmitting(false)
       setError(friendlyError(issueError, 'The permit could not be issued.'))
@@ -471,12 +537,30 @@ function IssuePermitForm({
     setSubmitting(false)
 
     if (subError) {
-      toast.warning('Permit issued, but Stripe setup did not start.')
+      // Compensate: the permit is still 'pending' and holding the space, and no
+      // Stripe subscription exists. Release both so the space is sellable again
+      // rather than leaving free parking on an unavailable space. The RPC
+      // refuses if a subscription id has since appeared, which means Stripe
+      // actually succeeded and the webhook owns the permit.
+      const { error: abandonError } = await supabase.rpc(
+        'abandon_pending_permit',
+        {
+          p_permit_id: permitId,
+          p_reason: 'Stripe subscription setup failed',
+        },
+      )
       setError(
         await edgeFunctionError(
           subError,
-          'The permit was issued, but its subscription could not be started. Open the permit to retry billing.',
+          abandonError
+            ? 'The subscription could not be started, and the permit could not be rolled back. Check the permit before reissuing.'
+            : 'The subscription could not be started, so the permit was rolled back and the space released. Try again.',
         ),
+      )
+      toast.error(
+        abandonError
+          ? 'Stripe setup failed and rollback failed — check the permit.'
+          : 'Stripe setup failed — the permit was rolled back.',
       )
       onIssued()
       return
@@ -535,6 +619,12 @@ function IssuePermitForm({
                 value={facilityId}
                 onValueChange={(value) => {
                   setFacilityId(value)
+                  const selected = facilities.find(
+                    (option) => option.id === value,
+                  )
+                  setStartDate(
+                    selected ? todayInputValue(selected.timezone) : '',
+                  )
                   setSpaces(null)
                   setSpaceId('')
                 }}
@@ -681,35 +771,68 @@ function CancelPermitDialog({
   async function confirmCancel() {
     if (!permit) return
     setBusy(true)
-    // cancel_permit is the source of truth: it marks the permit cancelled and
-    // releases the space hold immediately (so the occupancy grid frees the
-    // space at once). If a Stripe subscription exists, also request its
-    // cancellation so billing actually stops — cancel_permit is idempotent, so
-    // the resulting webhook re-cancel is a no-op.
-    const { error: cancelError } = await supabase.rpc('cancel_permit', {
-      p_permit_id: permit.id,
-      p_reason: reason.trim() || null,
-    })
-    if (cancelError) {
+
+    // No Stripe subscription means no billing to stop, so cancel_permit is the
+    // whole operation and its result is final. This is the ONLY path where the
+    // browser writes cancellation state.
+    if (!permit.stripe_subscription_id) {
+      const { error: directError } = await supabase.rpc('cancel_permit', {
+        p_permit_id: permit.id,
+        p_reason: reason.trim() || null,
+      })
       setBusy(false)
-      toast.error(friendlyError(cancelError, 'The permit could not be cancelled.'))
+      const direct = permitCancelOutcome({
+        hasSubscription: false,
+        directFailed: !!directError,
+      })
+      if (direct.kind === 'error') {
+        toast.error(friendlyError(directError, direct.message))
+        return
+      }
+      toast.success(direct.message)
+      onCancelled()
       return
     }
 
-    if (permit.stripe_subscription_id) {
-      const { error: subError } = await supabase.functions.invoke(
-        'create-permit-subscription',
-        { body: { permit_id: permit.id, action: 'cancel', reason: reason.trim() } },
-      )
-      if (subError) {
-        toast.warning(
-          'Permit cancelled, but stopping Stripe billing failed — verify in Stripe.',
-        )
-      }
+    // Record the intent before contacting Stripe, so the row reads "Cancelling"
+    // even if the operator closes the browser while Stripe is answering. This
+    // writes ONLY a timestamp: no status change and no hold release.
+    const { error: intentError } = await supabase.rpc(
+      'request_permit_cancellation',
+      {
+        p_permit_id: permit.id,
+        p_reason: reason.trim() || null,
+      },
+    )
+    if (intentError) {
+      setBusy(false)
+      const failed = permitCancelOutcome({
+        hasSubscription: true,
+        intentFailed: true,
+      })
+      toast.error(friendlyError(intentError, failed.message))
+      return
     }
 
+    // Stripe FIRST. Nothing in ParkOS is cancelled until
+    // customer.subscription.deleted arrives, so a failure here leaves the permit
+    // active and still billing — which is exactly what the operator is told.
+    const { error: subError } = await supabase.functions.invoke(
+      'create-permit-subscription',
+      {
+        body: { permit_id: permit.id, action: 'cancel', reason: reason.trim() },
+      },
+    )
     setBusy(false)
-    toast.success('Permit cancelled')
+
+    const outcome = permitCancelOutcome({
+      hasSubscription: true,
+      stripeFailed: !!subError,
+    })
+    if (outcome.kind === 'error') toast.error(outcome.message)
+    else toast.success(outcome.message)
+    // Refresh either way: the row now shows "Cancelling", and Cancel stays
+    // available so a failed Stripe call can be retried.
     onCancelled()
   }
 
@@ -732,7 +855,11 @@ function CancelPermitDialog({
           />
         </Field>
         <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={busy}>
+          <Button
+            variant="outline"
+            onClick={() => onOpenChange(false)}
+            disabled={busy}
+          >
             Keep permit
           </Button>
           <Button variant="destructive" onClick={confirmCancel} disabled={busy}>
@@ -744,38 +871,59 @@ function CancelPermitDialog({
   )
 }
 
-function PermitStatusBadge({ status }: { status: string }) {
+function PermitStatusBadge({
+  status,
+  cancellationRequestedAt,
+}: {
+  status: string
+  cancellationRequestedAt: string | null
+}) {
+  // An outstanding request outranks the stored status: the permit is still
+  // active and still billing until Stripe confirms, but staff need to see that
+  // a cancellation is already in flight rather than clicking Cancel again.
+  if (isCancelling(status, cancellationRequestedAt))
+    return <Badge variant="secondary">Cancelling</Badge>
+  // 'pending' means no Stripe subscription exists yet, so it entitles nothing.
+  // It must never render like 'active'.
   const variant =
     status === 'active'
       ? 'default'
-      : status === 'suspended'
+      : status === 'suspended' || status === 'pending'
         ? 'secondary'
         : 'outline'
   return <Badge variant={variant}>{label(status)}</Badge>
 }
 
-function billingPeriod(start: string | null, end: string | null) {
+function billingPeriod(
+  start: string | null,
+  end: string | null,
+  timeZone: string,
+) {
   if (!start && !end) return 'Awaiting first invoice'
   const fmt = (iso: string | null) =>
-    iso ? new Date(iso).toLocaleDateString(undefined, { dateStyle: 'medium' }) : '—'
+    iso
+      ? new Date(iso).toLocaleDateString(undefined, {
+          timeZone,
+          dateStyle: 'medium',
+        })
+      : '—'
   return `${fmt(start)} → ${fmt(end)}`
 }
 
-/** A date input value (YYYY-MM-DD) for today, in local time. */
-function todayInputValue() {
-  const now = new Date()
-  now.setMinutes(now.getMinutes() - now.getTimezoneOffset())
-  return now.toISOString().slice(0, 10)
+/** A date input value (YYYY-MM-DD) for today on the facility clock. */
+function todayInputValue(timeZone: string) {
+  return instantToFacilityInput(new Date(), timeZone).slice(0, 10)
 }
 
-/** Interpret a date input as the start instant. An empty value falls back to
- * now so a permit always has a valid start. */
-function startAtIso(dateValue: string) {
-  if (!dateValue) return new Date().toISOString()
-  const parsed = new Date(`${dateValue}T00:00:00`)
-  return Number.isNaN(parsed.getTime())
-    ? new Date().toISOString()
-    : parsed.toISOString()
+/** Interpret midnight on the selected date using the facility timezone. */
+function startAtIso(dateValue: string, timeZone: string) {
+  if (!dateValue) {
+    throw new FacilityTimeError(
+      'Enter a permit start date.',
+      'INVALID_LOCAL_TIME',
+    )
+  }
+  return facilityInputToUtc(`${dateValue}T00:00`, timeZone)
 }
 
 function label(value: string) {

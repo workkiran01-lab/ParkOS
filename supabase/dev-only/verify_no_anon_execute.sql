@@ -2,7 +2,6 @@
 -- except the ones deliberately meant to be.
 --
 --   npm run test:acl
---   npx supabase db query --linked --file supabase/dev-only/verify_no_anon_execute.sql
 --
 -- WHY THIS EXISTS, AND WHY IT IS NOT A GREP OVER THE MIGRATIONS.
 -- Supabase ships ALTER DEFAULT PRIVILEGES on schema `public` granting EXECUTE
@@ -24,7 +23,7 @@
 -- That is inherent: the grant is created by the platform at CREATE FUNCTION
 -- time, so it does not exist to be observed until after a migration is applied.
 --
--- Read-only. No transaction needed; it writes nothing.
+-- The temporary result table is rolled back with the transaction.
 --
 -- EXTENDING THIS. The same ALTER DEFAULT PRIVILEGES grants anon `arwdDxtm`
 -- (INSERT/UPDATE/DELETE included) on every new TABLE in public, where RLS is
@@ -32,6 +31,9 @@
 -- over pg_class/relacl for tables missing `relrowsecurity` would cover that.
 -- Not done here; recorded in docs/roadmap.md.
 
+begin;
+
+create temporary table verifier_acl_result on commit drop as
 with allowed(proname, identity_args) as (
   -- The ONLY functions anon is meant to execute. Adding a row here is a
   -- deliberate act: it means an unauthenticated visitor may call it.
@@ -105,3 +107,21 @@ select case
                    ', ' order by o.prosecdef desc, o.proname)
             from offenders o),
          'none') as offending_functions;
+
+do $$
+declare
+  v_result verifier_acl_result%rowtype;
+begin
+  select * into strict v_result from verifier_acl_result;
+  if v_result.verdict <> 'PASS' then
+    raise exception
+      'ACL verifier failed: % anon-executable offender(s), % stale allowlist entry/entries: %',
+      v_result.anon_executable_offenders,
+      v_result.stale_allowlist_entries,
+      v_result.offending_functions;
+  end if;
+end $$;
+
+select * from verifier_acl_result;
+
+rollback;

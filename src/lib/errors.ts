@@ -18,6 +18,11 @@ const ERROR_MESSAGES: Record<string, string> = {
   REFUND_UNAVAILABLE: 'The refund could not be started. Please try again.',
   STRIPE_NOT_CONFIGURED: 'Payments are not configured yet.',
   SPACE_UNAVAILABLE: 'That space is no longer available for the selected time.',
+  // The operating-hours trigger fires on every write of a reservation window,
+  // so this reaches walk-in check-in and extend too -- not just the two screens
+  // that happen to translate it inline.
+  OUTSIDE_OPERATING_HOURS:
+    'That time is outside this facility’s operating hours.',
   PERMIT_SUBSCRIPTION_ACTIVE:
     'You have an active permit subscription. Please cancel it before deactivating your account.',
 }

@@ -1,5 +1,5 @@
--- DEV-ONLY manual seed for parkos-dev. Run with the Supabase CLI's file-query
--- command; this file deliberately lives outside migrations and must never be pushed.
+-- DEV-ONLY manual seed for a disposable local database. Run only through the
+-- loopback-guarded npm command. This file deliberately lives outside migrations.
 -- Creates two isolated fake orgs so cross-org RLS
 -- isolation can be PROVEN (see supabase/tests/rls_isolation_checks.sql), not assumed.
 -- Do NOT apply this migration to a production project: it inserts fake auth.users.
@@ -63,7 +63,7 @@ on conflict (org_id, user_id) do nothing;
 insert into public.facilities (id, org_id, name, address, timezone, operating_hours) values
   ('11111111-1111-1111-1111-111111111111', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
    'Lot A', '100 Harbor Plaza, Long Beach, CA', 'America/Los_Angeles',
-   '{"type":"24/7","gated":true,"attendant_booth":true}'),
+   '{"type":"24_hours","gated":true,"attendant_booth":true}'),
   ('22222222-2222-2222-2222-222222222222', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
    'Lot B', '250 Shoreline Dr, Long Beach, CA', 'America/Los_Angeles',
    '{"type":"daily","open":"06:00","close":"22:00","attended":false}')

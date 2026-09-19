@@ -3,7 +3,12 @@ import { toast } from 'sonner'
 import { PhotoCapture } from '@/components/attendant/PhotoCapture'
 import { lookupByPlate, type PlateMatch } from '@/lib/attendant'
 import { friendlyError } from '@/lib/errors'
-import { defaultLocalDatetime, dollars } from '@/lib/format'
+import {
+  FacilityTimeError,
+  instantToFacilityInput,
+  parseFacilityWindow,
+} from '@/lib/facility-time'
+import { dollars } from '@/lib/format'
 import { supabase } from '@/lib/supabase'
 import {
   bigButton,
@@ -23,11 +28,13 @@ type AvailableSpace = { id: string; space_number: string; space_type: string }
 export function WalkIn({
   orgId,
   facilityId,
+  facilityTimezone,
   initialPlate,
   onCheckedIn,
 }: {
   orgId: string
   facilityId: string
+  facilityTimezone: string
   initialPlate: string
   onCheckedIn: () => void
 }) {
@@ -43,12 +50,21 @@ export function WalkIn({
   const [color, setColor] = useState('')
 
   // window + space
-  const [start, setStart] = useState(() => defaultLocalDatetime())
-  const [end, setEnd] = useState(() => defaultLocalDatetime(2 * 3600_000))
+  const [start, setStart] = useState(() =>
+    instantToFacilityInput(new Date(), facilityTimezone),
+  )
+  const [end, setEnd] = useState(() =>
+    instantToFacilityInput(
+      new Date(Date.now() + 2 * 3_600_000),
+      facilityTimezone,
+    ),
+  )
   const [spaces, setSpaces] = useState<AvailableSpace[] | null>(null)
   const [spaceId, setSpaceId] = useState<string | null>(null)
 
-  const [doneReservationId, setDoneReservationId] = useState<string | null>(null)
+  const [doneReservationId, setDoneReservationId] = useState<string | null>(
+    null,
+  )
   const [doneTotal, setDoneTotal] = useState<number | null>(null)
 
   async function findPlate(event: FormEvent) {
@@ -115,14 +131,25 @@ export function WalkIn({
   }
 
   async function findSpaces() {
+    let window
+    try {
+      window = parseFacilityWindow(start, end, facilityTimezone)
+    } catch (caught) {
+      setError(
+        caught instanceof FacilityTimeError
+          ? caught.message
+          : 'Enter a valid arrival and departure.',
+      )
+      return
+    }
     setBusy(true)
     setError(null)
     setSpaces(null)
     setSpaceId(null)
     const { data, error: sErr } = await supabase.rpc('find_available_spaces', {
       p_facility_id: facilityId,
-      p_start: new Date(start).toISOString(),
-      p_end: new Date(end).toISOString(),
+      p_start: window.startIso,
+      p_end: window.endIso,
     })
     setBusy(false)
     if (sErr) {
@@ -134,14 +161,25 @@ export function WalkIn({
 
   async function checkIn() {
     if (!chosen || !spaceId) return
+    let window
+    try {
+      window = parseFacilityWindow(start, end, facilityTimezone)
+    } catch (caught) {
+      setError(
+        caught instanceof FacilityTimeError
+          ? caught.message
+          : 'Enter a valid arrival and departure.',
+      )
+      return
+    }
     setBusy(true)
     setError(null)
     const { data, error: ciErr } = await supabase.rpc('check_in_walk_in', {
       p_space_id: spaceId,
       p_customer_id: chosen.customer_id,
       p_vehicle_id: chosen.vehicle_id,
-      p_start: new Date(start).toISOString(),
-      p_end: new Date(end).toISOString(),
+      p_start: window.startIso,
+      p_end: window.endIso,
     })
     setBusy(false)
     if (ciErr) {
@@ -194,13 +232,19 @@ export function WalkIn({
               onChange={(e) => setPlate(e.target.value.toUpperCase())}
             />
           </label>
-          <button type="submit" disabled={busy || !plate.trim()} className={bigButtonOutline}>
+          <button
+            type="submit"
+            disabled={busy || !plate.trim()}
+            className={bigButtonOutline}
+          >
             {busy ? 'Searching…' : 'Find plate'}
           </button>
 
           {matches && matches.length > 0 && (
             <div className="space-y-2">
-              <p className="text-base font-medium">Existing match — tap to use:</p>
+              <p className="text-base font-medium">
+                Existing match — tap to use:
+              </p>
               {matches.map((m) => (
                 <button
                   key={m.vehicle_id}
@@ -208,7 +252,9 @@ export function WalkIn({
                   onClick={() => pickMatch(m)}
                   className={`flex w-full flex-col items-start rounded-lg border px-4 py-2 text-left ${tapTarget}`}
                 >
-                  <span className="text-base font-medium">{m.customer_name}</span>
+                  <span className="text-base font-medium">
+                    {m.customer_name}
+                  </span>
                   <span className="text-sm text-muted-foreground">
                     {m.license_plate}
                     {m.description ? ` · ${m.description}` : ''}
@@ -295,7 +341,12 @@ export function WalkIn({
               />
             </label>
           </div>
-          <button type="button" disabled={busy} onClick={findSpaces} className={bigButtonOutline}>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={findSpaces}
+            className={bigButtonOutline}
+          >
             {busy ? 'Loading…' : 'Find available spaces'}
           </button>
 

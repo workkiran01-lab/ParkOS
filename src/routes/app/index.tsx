@@ -324,7 +324,7 @@ function DashboardView() {
     )
     return map
   }, [spaces])
-  const greeting = greetingForNow()
+  const greeting = greetingForNow(facility?.timezone)
   const available = summary
     ? Math.max(summary.total_spaces - summary.held_now, 0)
     : null
@@ -362,7 +362,7 @@ function DashboardView() {
         actions={
           <>
             <Button variant="outline" className="h-9 px-3" asChild>
-              <Link to="/app/reservations">
+              <Link to="/app/booking/new">
                 <Plus className="size-4" />
                 New reservation
               </Link>
@@ -560,7 +560,7 @@ function DashboardView() {
                       </p>
                       <p className="mt-0.5 text-xs text-muted-foreground/75">
                         Space {row.space_number} · ended{' '}
-                        {formatTime(row.ends_at)}
+                        {formatTime(row.ends_at, facility?.timezone)}
                       </p>
                     </div>
                   </div>
@@ -625,7 +625,7 @@ function DashboardView() {
                     </p>
                   </div>
                   <p className="hidden text-xs text-muted-foreground/75 sm:block">
-                    {formatRangeStart(row.during)}
+                    {formatRangeStart(row.during, facility?.timezone)}
                   </p>
                   <span className="justify-self-end rounded-sm border px-2 py-0.5 text-[10px] font-semibold capitalize">
                     {row.status}
@@ -666,7 +666,7 @@ function DashboardView() {
                     </p>
                   </div>
                   <time className="font-data text-[10px] text-muted-foreground/75">
-                    {formatTime(row.checked_in_at)}
+                    {formatTime(row.checked_in_at, facility?.timezone)}
                   </time>
                 </div>
               ))}
@@ -694,24 +694,36 @@ function NumberFeedback({
     </span>
   )
 }
-function greetingForNow() {
-  const hour = new Date().getHours()
+function greetingForNow(timeZone?: string) {
+  if (!timeZone) return 'Welcome'
+  const hour = Number(
+    new Intl.DateTimeFormat('en-US', {
+      timeZone,
+      hour: 'numeric',
+      hourCycle: 'h23',
+    }).format(new Date()),
+  )
   return hour < 12
     ? 'Good morning'
     : hour < 18
       ? 'Good afternoon'
       : 'Good evening'
 }
-function formatTime(value: string) {
+function formatTime(value: string, timeZone?: string) {
   const date = new Date(value)
-  return Number.isNaN(date.getTime())
+  return Number.isNaN(date.getTime()) || !timeZone
     ? '—'
-    : date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+    : date.toLocaleTimeString([], {
+        timeZone,
+        hour: 'numeric',
+        minute: '2-digit',
+      })
 }
-function formatRangeStart(range: string) {
+function formatRangeStart(range: string, timeZone?: string) {
   const start = range.slice(1).split(',')[0].replace(/^"/, '')
-  return start
+  return start && timeZone
     ? new Date(start).toLocaleDateString([], {
+        timeZone,
         month: 'short',
         day: 'numeric',
       })
