@@ -9,6 +9,21 @@ const url = assertLoopbackDatabaseUrl(process.env.PARKOS_TEST_DATABASE_URL)
 const invoiceVerifier =
   'supabase/dev-only/20260903000000_verify_invoice_paid.sql'
 const cases = [
+  ...[
+    ['facility_dashboard_summary', 'CHECK2'],
+    ['report_revenue_by_period', 'CHECK3'],
+    ['report_revenue_by_space_type', 'CHECK4'],
+    ['report_revenue_split', 'CHECK4'],
+    ['facility_dashboard_summary', 'CHECK5'],
+  ].map(([fn, check]) => ({
+    name: `Booth revenue ${check} rejects empty ${fn}`,
+    function: fn,
+    emptyFunction: true,
+    isolateCheck: check,
+    verifier:
+      'supabase/dev-only/20260826000000_verify_booth_revenue_reporting.sql',
+    witness: `${check} FAIL:`,
+  })),
   {
     name: 'Manifest defaults to UTC today',
     function: 'facility_daily_manifest',
@@ -80,23 +95,45 @@ function psql(sql, scalar = false) {
   }
 }
 
-for (const mutation of cases) {
+const selected = cases.filter(
+  (mutation) => !process.argv[2] || mutation.name.includes(process.argv[2]),
+)
+assert.ok(selected.length, 'No matching SQL mutations')
+for (const mutation of selected) {
   const definition = psql(
     `select pg_get_functiondef(oid) from pg_proc where pronamespace = 'public'::regnamespace and proname = '${mutation.function}';`,
     true,
   )
   assert.equal(definition.status, 0, definition.output)
   const original = definition.stdout.replaceAll('\r', '')
-  assert.match(
-    original,
-    mutation.pattern,
-    `${mutation.name}: missing mutation anchor`,
-  )
-  const changed = original.replace(mutation.pattern, mutation.replacement)
-  const verifier = readFileSync(
+  let changed
+  if (mutation.emptyFunction) {
+    assert.match(original, /LANGUAGE sql/)
+    changed = original
+      .replace('LANGUAGE sql', 'LANGUAGE plpgsql')
+      .replace(
+        /AS \$function\$[\s\S]*?\$function\$/,
+        () => 'AS $function$ BEGIN RETURN; END; $function$',
+      )
+  } else {
+    assert.match(
+      original,
+      mutation.pattern,
+      `${mutation.name}: missing mutation anchor`,
+    )
+    changed = original.replace(mutation.pattern, mutation.replacement)
+  }
+  let verifier = readFileSync(
     new URL('../' + mutation.verifier, import.meta.url),
     'utf8',
   )
+  if (mutation.isolateCheck) {
+    // Keep the real fixture and selected assertion block. Independent checks
+    // must each fail, rather than hiding behind an earlier check's failure.
+    verifier = verifier.replace(/do \$\$[\s\S]*?end \$\$;/g, (block) =>
+      block.includes(`${mutation.isolateCheck} FAIL:`) ? block : '',
+    )
+  }
   assert.match(verifier, /\bbegin;/i)
   assert.match(verifier, /\brollback;/i)
   // Mutation and fixtures share one transaction. Even an assertion failure

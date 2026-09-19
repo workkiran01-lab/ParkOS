@@ -155,8 +155,8 @@ begin
     join public.reservations r on r.id = bp.reservation_id
    where r.facility_id = 'fe100000-0000-0000-0000-0000000000f1';
 
-  if v_stripe <> 1000 or v_cash <> 250 or v_card <> 400
-     or v_stripe + v_cash + v_card <> 1650 then
+  if v_stripe is distinct from 1000 or v_cash is distinct from 250 or v_card is distinct from 400
+     or v_stripe + v_cash + v_card is distinct from 1650 then
     raise exception
       'CHECK1 FAIL: raw ground truth online=% cash=% card=% total=%; expected 1000/250/400/1650',
       v_stripe, v_cash, v_card, v_stripe + v_cash + v_card;
@@ -167,6 +167,7 @@ end $$;
 
 -- ---------------------------------------------------------------------------
 -- CHECK 2: dashboard summary equals the independent raw-row ground truth.
+-- Null-safe comparisons also reject a function that returns no rows at all.
 -- ---------------------------------------------------------------------------
 
 do $$
@@ -184,7 +185,7 @@ begin
     from public.facility_dashboard_summary(
       'fe100000-0000-0000-0000-0000000000f1');
 
-  if v_total <> 1650 or v_stripe <> 1000 or v_cash <> 250 or v_card <> 400 then
+  if v_total is distinct from 1650 or v_stripe is distinct from 1000 or v_cash is distinct from 250 or v_card is distinct from 400 then
     raise exception
       'CHECK2 FAIL: dashboard online=% cash=% card=% total=%; expected 1000/250/400/1650',
       v_stripe, v_cash, v_card, v_total;
@@ -219,10 +220,10 @@ begin
     from public.report_revenue_by_period(
       v_day, v_day, 'fe100000-0000-0000-0000-0000000000f1', 'day');
 
-  if v_count <> 3 or v_total <> 1650 or v_refunds <> 1
-     or v_stripe_count <> 1 or v_stripe <> 1000
-     or v_cash_count <> 1 or v_cash <> 250
-     or v_card_count <> 1 or v_card <> 400 then
+  if v_count is distinct from 3 or v_total is distinct from 1650 or v_refunds is distinct from 1
+     or v_stripe_count is distinct from 1 or v_stripe is distinct from 1000
+     or v_cash_count is distinct from 1 or v_cash is distinct from 250
+     or v_card_count is distinct from 1 or v_card is distinct from 400 then
     raise exception
       'CHECK3 FAIL: period count=% total=% refunds=% online=%/% cash=%/% card=%/%',
       v_count, v_total, v_refunds, v_stripe_count, v_stripe,
@@ -251,7 +252,7 @@ begin
       v_day, v_day, 'fe100000-0000-0000-0000-0000000000f1')
    where space_type = 'standard';
 
-  if v_total <> 1650 or v_stripe <> 1000 or v_cash <> 250 or v_card <> 400 then
+  if v_total is distinct from 1650 or v_stripe is distinct from 1000 or v_cash is distinct from 250 or v_card is distinct from 400 then
     raise exception 'CHECK4 FAIL: space-type breakdown = %/%/%/%',
       v_total, v_stripe, v_cash, v_card;
   end if;
@@ -263,7 +264,7 @@ begin
       v_day, v_day, 'fe100000-0000-0000-0000-0000000000f1')
    where category = 'hourly';
 
-  if v_total <> 1650 or v_stripe <> 1000 or v_cash <> 250 or v_card <> 400 then
+  if v_total is distinct from 1650 or v_stripe is distinct from 1000 or v_cash is distinct from 250 or v_card is distinct from 400 then
     raise exception 'CHECK4 FAIL: hourly breakdown = %/%/%/%',
       v_total, v_stripe, v_cash, v_card;
   end if;
@@ -309,9 +310,9 @@ begin
     from public.report_revenue_by_period(
       v_day, v_day, 'fe200000-0000-0000-0000-0000000000f1', 'day');
 
-  if v_legacy <> 700 or v_booth_count <> 0
-     or v_dashboard <> v_legacy or v_period <> v_legacy
-     or v_stripe <> v_legacy or v_cash <> 0 or v_card <> 0 then
+  if v_legacy is distinct from 700 or v_booth_count is distinct from 0
+     or v_dashboard is distinct from v_legacy or v_period is distinct from v_legacy
+     or v_stripe is distinct from v_legacy or v_cash is distinct from 0 or v_card is distinct from 0 then
     raise exception
       'CHECK5 FAIL: legacy=% booth_rows=% dashboard=% period=% online=% cash=% card=%',
       v_legacy, v_booth_count, v_dashboard, v_period, v_stripe, v_cash, v_card;
