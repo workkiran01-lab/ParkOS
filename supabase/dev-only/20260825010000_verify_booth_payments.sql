@@ -146,10 +146,10 @@ begin
 
   v_items := jsonb_array_length(v_breakdown -> 'line_items');
 
-  if v_cents <> 2200 then
+  if v_cents is distinct from 2200 then
     raise exception 'CHECK1 FAIL: cross-midnight overstay = %c, expected 2200c', v_cents;
   end if;
-  if v_items <> 2 then
+  if v_items is distinct from 2 then
     raise exception 'CHECK1 FAIL: expected 2 per-day line items, found %', v_items;
   end if;
 
@@ -174,15 +174,15 @@ begin
   v_items := jsonb_array_length(v_breakdown -> 'line_items');
   v_hours := (v_breakdown -> 'line_items' -> 0 ->> 'hours')::numeric;
 
-  if v_items <> 1 then
+  if v_items is distinct from 1 then
     raise exception
       'CHECK2 FAIL: fall-back day split into % line items, expected 1', v_items;
   end if;
-  if v_hours <> 25 then
+  if v_hours is distinct from 25 then
     raise exception
       'CHECK2 FAIL: fall-back local day measured % hours, expected 25', v_hours;
   end if;
-  if v_cents <> 1200 then
+  if v_cents is distinct from 1200 then
     raise exception
       'CHECK2 FAIL: fall-back overstay = %c, expected one 1200c cap', v_cents;
   end if;
@@ -205,7 +205,7 @@ begin
     from public.calculate_overstay(
       'ff000000-0000-0000-0000-00000000e003', '2026-03-08 10:00:00+00');
 
-  if v_cents <> 250 then
+  if v_cents is distinct from 250 then
     raise exception
       'CHECK3 FAIL: spring-forward overstay = %c, expected 250c for 30 real minutes',
       v_cents;
@@ -224,14 +224,14 @@ begin
   select overstay_cents into v_cents
     from public.calculate_overstay(
       'ff000000-0000-0000-0000-00000000e001', '2026-08-20 05:00:00+00');
-  if v_cents <> 0 then
+  if v_cents is distinct from 0 then
     raise exception 'CHECK4 FAIL: on-time departure charged %c', v_cents;
   end if;
 
   select overstay_cents into v_cents
     from public.calculate_overstay(
       'ff000000-0000-0000-0000-00000000e001', '2026-08-20 03:00:00+00');
-  if v_cents <> 0 then
+  if v_cents is distinct from 0 then
     raise exception 'CHECK4 FAIL: early departure charged %c', v_cents;
   end if;
 

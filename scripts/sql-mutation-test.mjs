@@ -9,6 +9,14 @@ const url = assertLoopbackDatabaseUrl(process.env.PARKOS_TEST_DATABASE_URL)
 const invoiceVerifier =
   'supabase/dev-only/20260903000000_verify_invoice_paid.sql'
 const cases = [
+  ...['CHECK1', 'CHECK2', 'CHECK3', 'CHECK4'].map((check) => ({
+    name: `Overstay ${check} rejects empty pricing`,
+    function: 'calculate_overstay',
+    emptyFunction: true,
+    isolateCheck: check,
+    verifier: 'supabase/dev-only/20260825010000_verify_booth_payments.sql',
+    witness: `${check} FAIL:`,
+  })),
   {
     name: 'Manifest leaks another tenant through definer privileges',
     function: 'facility_daily_manifest',
@@ -133,7 +141,7 @@ for (const mutation of selected) {
   const original = definition.stdout.replaceAll('\r', '')
   let changed
   if (mutation.emptyFunction) {
-    assert.match(original, /LANGUAGE sql/)
+    assert.match(original, /LANGUAGE (sql|plpgsql)/)
     changed = original
       .replace('LANGUAGE sql', 'LANGUAGE plpgsql')
       .replace(
