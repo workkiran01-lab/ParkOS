@@ -113,6 +113,42 @@ values
 
 -- Archive the dedicated probe as postgres before the role switch. The
 -- surrounding transaction rolls every fixture back.
+insert into public.booth_payments
+  (id, org_id, reservation_id, amount_cents, method, collected_by, created_at, status)
+values ('ed000000-0000-0000-0000-0000000000b2', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+        'ed000000-0000-0000-0000-0000000000d1', 900, 'cash',
+        '00000000-0000-0000-0000-0000000000a1', '2026-08-23 15:45:00+00', 'refunded');
+
+-- An eligible row in Org B makes the cross-tenant check non-vacuous. Prove
+-- that its own admin can read it before asking Org A's admin to read it.
+insert into public.customers (id, org_id, full_name)
+values ('ed000000-0000-0000-0000-0000000000f7', 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', 'Other Org Driver');
+insert into public.reservations
+  (id, org_id, facility_id, space_id, customer_id, during, status,
+   booking_code, price_breakdown, total_cents)
+select 'ed000000-0000-0000-0000-0000000000f8', 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb',
+       '33333333-3333-3333-3333-333333333333', s.id,
+       'ed000000-0000-0000-0000-0000000000f7',
+       '[2026-08-23 18:00:00+00,2026-08-23 19:00:00+00)', 'confirmed',
+       'PKS-MANFAB', '{"currency":"USD","line_items":[],"total_cents":600}', 600
+  from public.spaces s join public.zones z on z.id = s.zone_id
+ where z.facility_id = '33333333-3333-3333-3333-333333333333'
+ order by s.id limit 1;
+
+set local role authenticated;
+select set_config('request.jwt.claims',
+  '{"sub":"00000000-0000-0000-0000-0000000000b1","role":"authenticated"}', true);
+select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-0000000000b1', true);
+do $$
+begin
+  if (select count(*) from public.facility_daily_manifest(
+        '33333333-3333-3333-3333-333333333333', '2026-08-23')
+       where reservation_id = 'ed000000-0000-0000-0000-0000000000f8') <> 1 then
+    raise exception 'CHECK8 FAIL: owning tenant cannot read the isolation witness';
+  end if;
+end $$;
+reset role;
+
 create temporary table archived_probe on commit drop as
 select r.id,
        r.facility_id,
@@ -174,7 +210,8 @@ raw_paid as (
          coalesce((select sum(bp.amount_cents)
                      from public.booth_payments bp
                     where bp.reservation_id = r.id
-                      and bp.org_id = r.org_id), 0)
+                      and bp.org_id = r.org_id
+                      and bp.status = 'succeeded'), 0)
        + coalesce((select sum(p.amount_cents)
                      from public.payments p
                     where p.reservation_id = r.id
@@ -271,23 +308,23 @@ select '4. row set matches hand-written predicate',
        case when (select count(*) from expected) = 0 then 'INCONCLUSIVE (no rows)'
             when (select count(*) from (
                    select facility_id, local_date, reservation_id from manifest
-                   except
+                   except all
                    select facility_id, local_date, reservation_id from expected) x) = 0
              and (select count(*) from (
                    select facility_id, local_date, reservation_id from expected
-                   except
+                   except all
                    select facility_id, local_date, reservation_id from manifest) y) = 0
               then 'PASS' else 'FAIL' end,
        (select count(*) from expected)::text || ' expected, '
        || (select count(*) from manifest)::text || ' returned, '
        || (select count(*) from (
              select facility_id, local_date, reservation_id from manifest
-             except
+             except all
              select facility_id, local_date, reservation_id from expected) x)::text
        || ' extra, '
        || (select count(*) from (
              select facility_id, local_date, reservation_id from expected
-             except
+             except all
              select facility_id, local_date, reservation_id from manifest) y)::text
        || ' missing'
 

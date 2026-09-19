@@ -9,6 +9,31 @@ const url = assertLoopbackDatabaseUrl(process.env.PARKOS_TEST_DATABASE_URL)
 const invoiceVerifier =
   'supabase/dev-only/20260903000000_verify_invoice_paid.sql'
 const cases = [
+  {
+    name: 'Manifest leaks another tenant through definer privileges',
+    function: 'facility_daily_manifest',
+    pattern: /LANGUAGE sql/,
+    replacement: 'LANGUAGE sql SECURITY DEFINER',
+    verifier: 'supabase/dev-only/20260826010000_verify_daily_manifest.sql',
+    witness: '8. cross-tenant facility returns zero rows: FAIL',
+  },
+  {
+    name: 'Manifest counts refunded booth money',
+    function: 'facility_daily_manifest',
+    pattern: /and bp\.status = 'succeeded'/,
+    replacement: '',
+    verifier: 'supabase/dev-only/20260826010000_verify_daily_manifest.sql',
+    witness: '2. paid_cents == raw booth+succeeded payments: FAIL',
+  },
+  {
+    name: 'Manifest duplicates otherwise correct rows',
+    function: 'facility_daily_manifest',
+    pattern: /from target t/,
+    replacement:
+      "from target t cross join generate_series(1, case when t.facility_id = '11111111-1111-1111-1111-111111111111' then 2 else 1 end) duplicate_rows",
+    verifier: 'supabase/dev-only/20260826010000_verify_daily_manifest.sql',
+    witness: '4. row set matches hand-written predicate: FAIL',
+  },
   ...[
     ['facility_dashboard_summary', 'CHECK2'],
     ['report_revenue_by_period', 'CHECK3'],
