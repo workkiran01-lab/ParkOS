@@ -1477,6 +1477,65 @@ begin
   raise notice 'CHECK14 PASS: null/wrong email refused without writes; matching email accepted atomically';
 end $$;
 
+-- CHECK15: account lockout also applies to onboarding SECURITY DEFINER paths.
+do $$
+declare
+  v_user uuid := 'ae000000-0000-0000-0000-000000000003';
+  v_sql text;
+  v_calls text[] := array[
+    'select public.create_organization_with_admin(''__DEACTIVATED_ORG__'')',
+    'select * from public.public_ensure_customer(''11111111-1111-1111-1111-111111111111'',''Disabled customer'')',
+    'select public.accept_invite(''ae000000-0000-0000-0000-000000000004'')'
+  ];
+begin
+  insert into auth.users(id,aud,role,email)
+  values (v_user,'authenticated','authenticated','disabled@example.test');
+  insert into public.account_status(user_id,status) values (v_user,'deactivated');
+  insert into public.invites(org_id,email,role,token,invited_by)
+  values ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa','disabled@example.test','attendant',
+          'ae000000-0000-0000-0000-000000000004','00000000-0000-0000-0000-0000000000a1');
+  perform set_config('request.jwt.claims',
+    '{"sub":"ae000000-0000-0000-0000-000000000003","role":"authenticated"}',true);
+  perform set_config('request.jwt.claim.sub',v_user::text,true);
+  foreach v_sql in array v_calls loop
+    set local role authenticated;
+    begin
+      execute v_sql;
+      raise exception 'CHECK15 FAIL: deactivated identity executed %', v_sql;
+    exception when sqlstate 'P0001' then
+      if sqlerrm <> 'ACCOUNT_DEACTIVATED' then raise; end if;
+    end;
+    reset role;
+  end loop;
+  if exists (select 1 from public.customers where user_id = v_user)
+     or exists (select 1 from public.memberships where user_id = v_user)
+     or exists (select 1 from public.profiles where id = v_user) then
+    raise exception 'CHECK15 FAIL: deactivated onboarding left identity records';
+  end if;
+
+  delete from public.account_status where user_id = v_user;
+  foreach v_sql in array v_calls loop
+    begin
+      set local role authenticated;
+      execute v_sql;
+      reset role;
+      if v_sql like '%public_ensure_customer%' then
+        if (select count(*) from public.customers where user_id = v_user and org_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa') <> 1 then
+          raise exception 'CHECK15 FAIL: active customer onboarding wrote no own customer';
+        end if;
+      elsif (select count(*) from public.memberships where user_id = v_user) <> 1
+         or (select count(*) from public.profiles where id = v_user) <> 1 then
+        raise exception 'CHECK15 FAIL: active staff onboarding did not create membership/profile';
+      end if;
+      raise exception '__ACTIVE_ONBOARDING_ROLLBACK__';
+    exception when sqlstate 'P0001' then
+      reset role;
+      if sqlerrm <> '__ACTIVE_ONBOARDING_ROLLBACK__' then raise; end if;
+    end;
+  end loop;
+  raise notice 'CHECK15 PASS: all three onboarding RPCs enforce deactivation and allow active accounts';
+end $$;
+
 rollback;
 
 -- The Management API suppresses RAISE NOTICE output. If every assertion above
@@ -1500,6 +1559,7 @@ from (values
   ('CHECK10', 'PASS: cross-org check-in/out denied; vehicle_photos + storage objects org-scoped'),
   ('CHECK12', 'PASS: permit roles/RLS isolated; active permit blocks reservations; cancel releases hold'),
   ('CHECK13', 'PASS: last active admin protected; non-last admin removal allowed'),
-  ('CHECK14', 'PASS: null/wrong invite emails refused; matching email accepted atomically')
+  ('CHECK14', 'PASS: null/wrong invite emails refused; matching email accepted atomically'),
+  ('CHECK15', 'PASS: deactivated onboarding refused; active onboarding preserved')
 ) as checks(check_name, result)
 order by check_name;

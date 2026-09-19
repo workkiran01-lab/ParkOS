@@ -9,6 +9,19 @@ const url = assertLoopbackDatabaseUrl(process.env.PARKOS_TEST_DATABASE_URL)
 const invoiceVerifier =
   'supabase/dev-only/20260903000000_verify_invoice_paid.sql'
 const cases = [
+  ...[
+    'create_organization_with_admin',
+    'public_ensure_customer',
+    'accept_invite',
+  ].map((fn) => ({
+    name: `Deactivated onboarding rejects bypass in ${fn}`,
+    function: fn,
+    pattern:
+      /  if public\.is_account_deactivated\(\) then\n    raise exception using errcode = 'P0001', message = 'ACCOUNT_DEACTIVATED';\n  end if;/,
+    replacement: '',
+    verifier: 'supabase/dev-only/DEV_ONLY_verify_rls_isolation.sql',
+    witness: 'CHECK15 FAIL: deactivated identity executed',
+  })),
   {
     name: 'Invitations reject SQL NULL email bypass',
     function: 'accept_invite',
