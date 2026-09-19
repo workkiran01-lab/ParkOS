@@ -9,6 +9,16 @@ const url = assertLoopbackDatabaseUrl(process.env.PARKOS_TEST_DATABASE_URL)
 const invoiceVerifier =
   'supabase/dev-only/20260903000000_verify_invoice_paid.sql'
 const cases = [
+  {
+    name: 'Correction preview rejects duplicate affected reservations',
+    function: 'reservation_correction_scope',
+    pattern: /    v_affected;\nend;/,
+    replacement: '    v_affected || v_affected;\nend;',
+    verifier:
+      'supabase/dev-only/20260907010000_verify_reservation_corrections.sql',
+    witness:
+      'CORRECTION FAIL: correction scope preview did not match the affected set',
+  },
   ...[
     [
       'table read',

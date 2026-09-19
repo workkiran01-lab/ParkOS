@@ -205,6 +205,7 @@ begin
     -- The preview staff confirm against must match what actually happened.
     if v_preview_count is distinct from 1
        or v_preview is null
+       or pg_catalog.jsonb_array_length(v_preview) is distinct from 1
        or (v_preview -> 0 ->> 'reservation_id') is distinct from v_blocking_reservation::text then
       raise exception 'CORRECTION FAIL: correction scope preview did not match the affected set';
     end if;
