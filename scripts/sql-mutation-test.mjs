@@ -10,6 +10,25 @@ const invoiceVerifier =
   'supabase/dev-only/20260903000000_verify_invoice_paid.sql'
 const cases = [
   {
+    name: 'Partial permit refund silently returns no result',
+    function: 'record_permit_refund',
+    pattern: /\nbegin\n/,
+    replacement: `\nbegin\n  if p_amount_refunded_cents = 5000 then return null; end if;\n`,
+    verifier: 'supabase/dev-only/20260906000000_verify_refund_ledgers.sql',
+    witness: 'CHECK2 FAIL: a partial refund returned',
+  },
+  {
+    name: 'Cancelled permit payment claims success without recording money',
+    function: 'record_permit_payment',
+    pattern: /  insert into public\.processed_stripe_events/,
+    replacement: `  if v_permit.status = 'cancelled' then
+      return jsonb_build_object('processed', true, 'outcome', 'permit_payment_recorded');
+    end if;
+  insert into public.processed_stripe_events`,
+    verifier: 'supabase/dev-only/20260829000000_verify_permit_payments.sql',
+    witness: 'CHECK8 FAIL: cancelled-permit payment is missing from the ledger',
+  },
+  {
     name: 'Correction result omits affected identifiers',
     function: 'correct_reservation',
     pattern:

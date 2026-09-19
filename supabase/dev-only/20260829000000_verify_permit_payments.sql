@@ -438,6 +438,26 @@ begin
       v_result;
   end if;
 
+  -- A success flag is not evidence of a ledger write. Pin the raw row, claim,
+  -- audit and retained cancellation independently of the RPC response.
+  if (select count(*) from public.permit_payments
+       where permit_id = 'dd000000-0000-0000-0000-0000000000e2'
+         and org_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+         and stripe_invoice_id = 'in_devtest_0003'
+         and amount_cents = 15000 and currency = 'USD' and status = 'succeeded') <> 1 then
+    raise exception 'CHECK8 FAIL: cancelled-permit payment is missing from the ledger';
+  end if;
+  if (select count(*) from public.audit_log a join public.permit_payments p on p.id = a.target_id
+       where p.stripe_invoice_id = 'in_devtest_0003'
+         and a.action = 'record_permit_payment' and a.target_table = 'permit_payments'
+         and a.actor_id is null) <> 1
+     or (select count(*) from public.processed_stripe_events
+          where event_id = 'evt_devtest_0004' and org_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa') <> 1
+     or (select status from public.permits where id = 'dd000000-0000-0000-0000-0000000000e2')
+          is distinct from 'cancelled' then
+    raise exception 'CHECK8 FAIL: cancelled-permit receipt lacks audit/claim or changed permit status';
+  end if;
+
   raise notice 'CHECK8 PASS: money collected against a cancelled permit is still booked';
 end $$;
 

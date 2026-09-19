@@ -389,7 +389,8 @@ begin
   -- full reversals only, and writing it as one would erase money still held.
   v_result := public.record_permit_refund(
     'evt_devtest_refund_partial', 'pi_devtest_refund_permit', 15000, 5000);
-  if v_result ->> 'outcome' <> 'partial_refund_not_supported' then
+  if v_result ->> 'outcome' is distinct from 'partial_refund_not_supported'
+     or v_result ->> 'processed' is distinct from 'false' then
     raise exception 'CHECK2 FAIL: a partial refund returned %', v_result;
   end if;
   select pp.status into v_status from public.permit_payments pp
