@@ -9,6 +9,7 @@ on:
       - 'booking/**'
       - 'design/**'
       - 'hardening/**'
+      - 'fix/remaining-defects'
 
 env:
   SUPABASE_TELEMETRY_DISABLED: '1'
@@ -49,6 +50,7 @@ jobs:
           fi
           exit $rc
       - run: npm test
+      - run: npm run test:webhook-mutations
       - run: npm run build
       - run: git diff --exit-code -- src/routeTree.gen.ts
 
