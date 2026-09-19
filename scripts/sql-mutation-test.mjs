@@ -85,7 +85,7 @@ const cases = [
       create function public.verifier_uncovered_definer() returns integer
       language sql security definer set search_path = '' as 'select 1';
       revoke all on function public.verifier_uncovered_definer() from public, anon, authenticated, service_role;
-      ${changeOwner ? 'alter function public.verifier_uncovered_definer() owner to service_role;' : ''}`,
+      ${changeOwner ? 'grant create on schema public to service_role; alter function public.verifier_uncovered_definer() owner to service_role;' : ''}`,
     verifier: 'supabase/dev-only/DEV_ONLY_verify_privileged_functions.sql',
     witness:
       'SECURITY DEFINER function has no verifier coverage: verifier_uncovered_definer',
