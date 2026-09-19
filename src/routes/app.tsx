@@ -173,6 +173,14 @@ function AppLayout() {
           onSignOut={signOut}
           sidebar={(collapsed) => (
             <div className="space-y-4">
+              {operations && (
+                <NavItem
+                  to="/app/calendar"
+                  label="Calendar"
+                  icon={CalendarDays}
+                  collapsed={collapsed}
+                />
+              )}
               <NavItem
                 to="/app"
                 label="Dashboard"
@@ -348,6 +356,7 @@ function NavGroup({
 }
 
 type AppPath =
+  | '/app/calendar'
   | '/app'
   | '/app/booking/manifest'
   | '/app/booking/new'

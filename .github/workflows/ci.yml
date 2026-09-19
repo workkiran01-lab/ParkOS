@@ -9,6 +9,7 @@ on:
       - 'booking/**'
       - 'design/**'
       - 'hardening/**'
+      - 'feature/nav-restructure'
 
 env:
   SUPABASE_TELEMETRY_DISABLED: '1'
@@ -82,6 +83,7 @@ jobs:
           cat "$RUNNER_TEMP/supabase.env" >> "$GITHUB_ENV"
       - run: npm run db:seed:dev
       - run: npm run test:db
+      - run: npm run test:queries
       - run: npm run test:correction-race
       - name: Concurrency test
         shell: bash

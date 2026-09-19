@@ -37,6 +37,7 @@ type AppShellProps = {
 
 const pageTitles: Record<string, string> = {
   '/app': 'Dashboard',
+  '/app/calendar': 'Calendar',
   '/app/booking/manifest': 'Daily Manifest',
   '/app/booking/new': 'New Booking',
   '/app/occupancy': 'Occupancy',
@@ -369,6 +370,7 @@ function Avatar({
 }
 
 const quickLinks = [
+  { to: '/app/calendar', label: 'Calendar' },
   { to: '/app', label: 'Dashboard' },
   { to: '/app/booking/manifest', label: 'Daily manifest' },
   { to: '/app/booking/new', label: 'New booking' },

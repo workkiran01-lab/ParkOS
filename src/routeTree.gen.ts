@@ -19,6 +19,7 @@ import { Route as PrivacyRouteImport } from './routes/privacy'
 import { Route as SignupRouteImport } from './routes/signup'
 import { Route as AppIndexRouteImport } from './routes/app/index'
 import { Route as AppAvailabilityRouteImport } from './routes/app/availability'
+import { Route as AppCalendarRouteImport } from './routes/app/calendar'
 import { Route as AppOccupancyRouteImport } from './routes/app/occupancy'
 import { Route as AppOnboardingRouteImport } from './routes/app/onboarding'
 import { Route as AppOverrideRouteImport } from './routes/app/override'
@@ -86,6 +87,11 @@ const AppIndexRoute = AppIndexRouteImport.update({
 const AppAvailabilityRoute = AppAvailabilityRouteImport.update({
   id: '/availability',
   path: '/availability',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppCalendarRoute = AppCalendarRouteImport.update({
+  id: '/calendar',
+  path: '/calendar',
   getParentRoute: () => AppRoute,
 } as any)
 const AppOccupancyRoute = AppOccupancyRouteImport.update({
@@ -189,6 +195,7 @@ export interface FileRoutesByFullPath {
   '/privacy': typeof PrivacyRoute
   '/signup': typeof SignupRoute
   '/app/availability': typeof AppAvailabilityRoute
+  '/app/calendar': typeof AppCalendarRoute
   '/app/occupancy': typeof AppOccupancyRoute
   '/app/onboarding': typeof AppOnboardingRoute
   '/app/override': typeof AppOverrideRoute
@@ -217,6 +224,7 @@ export interface FileRoutesByTo {
   '/privacy': typeof PrivacyRoute
   '/signup': typeof SignupRoute
   '/app/availability': typeof AppAvailabilityRoute
+  '/app/calendar': typeof AppCalendarRoute
   '/app/occupancy': typeof AppOccupancyRoute
   '/app/onboarding': typeof AppOnboardingRoute
   '/app/override': typeof AppOverrideRoute
@@ -248,6 +256,7 @@ export interface FileRoutesById {
   '/privacy': typeof PrivacyRoute
   '/signup': typeof SignupRoute
   '/app/availability': typeof AppAvailabilityRoute
+  '/app/calendar': typeof AppCalendarRoute
   '/app/occupancy': typeof AppOccupancyRoute
   '/app/onboarding': typeof AppOnboardingRoute
   '/app/override': typeof AppOverrideRoute
@@ -280,6 +289,7 @@ export interface FileRouteTypes {
     | '/privacy'
     | '/signup'
     | '/app/availability'
+    | '/app/calendar'
     | '/app/occupancy'
     | '/app/onboarding'
     | '/app/override'
@@ -308,6 +318,7 @@ export interface FileRouteTypes {
     | '/privacy'
     | '/signup'
     | '/app/availability'
+    | '/app/calendar'
     | '/app/occupancy'
     | '/app/onboarding'
     | '/app/override'
@@ -338,6 +349,7 @@ export interface FileRouteTypes {
     | '/privacy'
     | '/signup'
     | '/app/availability'
+    | '/app/calendar'
     | '/app/occupancy'
     | '/app/onboarding'
     | '/app/override'
@@ -444,6 +456,13 @@ declare module '@tanstack/react-router' {
       path: '/availability'
       fullPath: '/app/availability'
       preLoaderRoute: typeof AppAvailabilityRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/app/calendar': {
+      id: '/app/calendar'
+      path: '/calendar'
+      fullPath: '/app/calendar'
+      preLoaderRoute: typeof AppCalendarRouteImport
       parentRoute: typeof AppRoute
     }
     '/app/occupancy': {
@@ -577,6 +596,7 @@ declare module '@tanstack/react-router' {
 
 interface AppRouteChildren {
   AppAvailabilityRoute: typeof AppAvailabilityRoute
+  AppCalendarRoute: typeof AppCalendarRoute
   AppOccupancyRoute: typeof AppOccupancyRoute
   AppOnboardingRoute: typeof AppOnboardingRoute
   AppOverrideRoute: typeof AppOverrideRoute
@@ -594,6 +614,7 @@ interface AppRouteChildren {
 
 const AppRouteChildren: AppRouteChildren = {
   AppAvailabilityRoute: AppAvailabilityRoute,
+  AppCalendarRoute: AppCalendarRoute,
   AppOccupancyRoute: AppOccupancyRoute,
   AppOnboardingRoute: AppOnboardingRoute,
   AppOverrideRoute: AppOverrideRoute,

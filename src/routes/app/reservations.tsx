@@ -37,6 +37,7 @@ import { dollars } from '@/lib/format'
 import { formatRange, parseTstzrange } from '@/lib/holds'
 import { paymentsByReservation, type PaymentSummary } from '@/lib/payments'
 import { supabase } from '@/lib/supabase'
+import { reservationQuery } from '@/lib/reservation-queries'
 import { Field } from '@/routes/login'
 
 type Row = {
@@ -85,12 +86,7 @@ function StaffReservations() {
     setLoading(true)
     setError(null)
 
-    const resResult = await supabase
-      .from('reservations')
-      .select(
-        'id, booking_code, facility_id, space_id, customer_id, vehicle_id, during, status, total_cents, currency',
-      )
-      .eq('org_id', orgId)
+    const resResult = await reservationQuery(supabase, orgId)
       .order('created_at', { ascending: false })
       .limit(500)
 
