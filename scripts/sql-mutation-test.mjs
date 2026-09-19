@@ -9,6 +9,29 @@ const url = assertLoopbackDatabaseUrl(process.env.PARKOS_TEST_DATABASE_URL)
 const invoiceVerifier =
   'supabase/dev-only/20260903000000_verify_invoice_paid.sql'
 const cases = [
+  ...['parkos-permit-reconciliation', 'parkos-no-show-sweep'].map((job) => ({
+    name: `Cron rejects a no-op command: ${job}`,
+    scriptPattern: 'begin;',
+    scriptReplacement: `begin;\nupdate cron.job set command = 'select 1' where jobname = '${job}';`,
+    verifier:
+      'supabase/dev-only/20260901000000_verify_permit_event_ordering_guard.sql',
+    witness:
+      job === 'parkos-no-show-sweep'
+        ? 'CRON FAIL: no-show command is'
+        : 'CRON FAIL: reconciliation command is',
+  })),
+  ...[
+    ['log_permit_reconciliation', 'CRON FAIL: reconciliation command found'],
+    ['mark_no_shows', 'CRON FAIL: no-show command did not mark'],
+  ].map(([fn, witness]) => ({
+    name: `Cron rejects removed job behavior: ${fn}`,
+    function: fn,
+    pattern: /\nbegin\n/,
+    replacement: '\nbegin\n  return 0;\n',
+    verifier:
+      'supabase/dev-only/20260901000000_verify_permit_event_ordering_guard.sql',
+    witness,
+  })),
   {
     name: 'Partial permit refund silently returns no result',
     function: 'record_permit_refund',
