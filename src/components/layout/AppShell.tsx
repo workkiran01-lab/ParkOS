@@ -45,7 +45,7 @@ const pageTitles: Record<string, string> = {
   '/app/facilities': 'Facilities',
   '/app/permits': 'Permits',
   '/app/override': 'Override',
-  '/app/staff': 'Staff',
+  '/app/staff': 'Employees',
   '/app/reports': 'Reports',
   '/app/onboarding': 'Onboarding',
 }
