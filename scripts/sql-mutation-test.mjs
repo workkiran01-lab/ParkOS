@@ -93,7 +93,7 @@ const cases = [
   ...['parkos-permit-reconciliation', 'parkos-no-show-sweep'].map((job) => ({
     name: `Cron rejects a no-op command: ${job}`,
     scriptPattern: 'begin;',
-    scriptReplacement: `begin;\nupdate cron.job set command = 'select 1' where jobname = '${job}';`,
+    scriptReplacement: `begin;\nselect cron.schedule(jobname, schedule, 'select 1') from cron.job where jobname = '${job}';`,
     verifier:
       'supabase/dev-only/20260901000000_verify_permit_event_ordering_guard.sql',
     witness:
