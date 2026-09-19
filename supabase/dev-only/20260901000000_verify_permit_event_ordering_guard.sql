@@ -315,7 +315,7 @@ values ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'ce000000-0000-0000-0000-0000000
         'ce000000-0000-0000-0000-0000000000d1',
         tstzrange(now() - interval '2 hours', now() - interval '1 hour', '[)'), 'reservation');
 
-do $
+do $$
 declare v_command text; v_count integer;
 begin
   select command into v_command from cron.job where jobname = 'parkos-permit-reconciliation';
@@ -340,7 +340,7 @@ begin
     raise exception 'CRON FAIL: no-show command did not mark, release and audit exactly one overdue booking';
   end if;
   raise notice 'CRON PASS: registered reconciliation command found 5; no-show command marked/released/audited 1';
-end $;
+end $$;
 
 -- Evidence, emitted as rows because the Management API suppresses RAISE NOTICE.
 --
