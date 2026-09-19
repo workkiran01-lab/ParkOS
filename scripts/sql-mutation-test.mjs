@@ -27,7 +27,9 @@ const cases = [
     ],
     [
       'sequence',
-      'revoke usage on sequence public.receipts_number_seq from service_role;',
+      // nextval accepts either USAGE or UPDATE; platform defaults can supply
+      // the latter even when the explicit USAGE grant is removed.
+      'revoke usage, update on sequence public.receipts_number_seq from service_role, public;',
       'permission denied for sequence receipts_number_seq',
     ],
     [
