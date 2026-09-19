@@ -14,15 +14,17 @@ declare
   v_customer uuid;
   v_count integer;
   v_result timestamptz;
+  v_zone_case record;
 begin
   begin
-    if not public.is_valid_iana_timezone('America/Los_Angeles')
-       or not public.is_valid_iana_timezone('UTC')
-       or public.is_valid_iana_timezone('PST')
-       or public.is_valid_iana_timezone('EST')
-       or public.is_valid_iana_timezone('Pacific') then
-      raise exception 'TIME FAIL: IANA timezone validation disagrees with policy';
-    end if;
+    for v_zone_case in select * from (values
+      ('America/Los_Angeles', true), ('UTC', true),
+      ('PST', false), ('EST', false), ('Pacific', false)
+    ) expected(zone, valid) loop
+      if public.is_valid_iana_timezone(v_zone_case.zone) is distinct from v_zone_case.valid then
+        raise exception 'TIME FAIL: IANA timezone validation disagrees with policy for %', v_zone_case.zone;
+      end if;
+    end loop;
 
     begin
       update public.facilities set timezone = 'PST' where id = v_facility;
@@ -43,7 +45,7 @@ begin
     select public.facility_local_to_utc(
       v_facility, timestamp '2026-01-15 10:30'
     ) into v_result;
-    if v_result <> timestamptz '2026-01-15 18:30:00+00' then
+    if v_result is distinct from timestamptz '2026-01-15 18:30:00+00' then
       raise exception 'TIME FAIL: normal conversion returned %', v_result;
     end if;
 
@@ -65,42 +67,42 @@ begin
     select public.facility_local_to_utc(
       v_facility, timestamp '2026-11-01 01:30'
     ) into v_result;
-    if v_result <> timestamptz '2026-11-01 08:30:00+00' then
+    if v_result is distinct from timestamptz '2026-11-01 08:30:00+00' then
       raise exception 'TIME FAIL: fall-back overlap chose %, expected 08:30Z', v_result;
     end if;
 
     update public.facilities
        set operating_hours = '{"type":"daily","open":"06:00","close":"22:00"}'
      where id = v_facility;
-    if not public.facility_accepts_reservation_window(
+    if public.facility_accepts_reservation_window(
       v_facility,
       timestamp '2028-02-15 06:00' at time zone 'America/Los_Angeles',
       timestamp '2028-02-15 22:00' at time zone 'America/Los_Angeles'
-    ) then raise exception 'TIME FAIL: exact daily boundaries were rejected'; end if;
+    ) is distinct from true then raise exception 'TIME FAIL: exact daily boundaries were rejected'; end if;
     if public.facility_accepts_reservation_window(
       v_facility,
       timestamp '2028-02-15 05:59' at time zone 'America/Los_Angeles',
       timestamp '2028-02-15 07:00' at time zone 'America/Los_Angeles'
-    ) then raise exception 'TIME FAIL: before-opening window was accepted'; end if;
+    ) is distinct from false then raise exception 'TIME FAIL: before-opening window was accepted'; end if;
     if public.facility_accepts_reservation_window(
       v_facility,
       timestamp '2028-02-15 21:00' at time zone 'America/Los_Angeles',
       timestamp '2028-02-15 22:01' at time zone 'America/Los_Angeles'
-    ) then raise exception 'TIME FAIL: after-closing window was accepted'; end if;
+    ) is distinct from false then raise exception 'TIME FAIL: after-closing window was accepted'; end if;
 
     update public.facilities
        set operating_hours = '{"type":"daily","open":"22:00","close":"06:00"}'
      where id = v_facility;
-    if not public.facility_accepts_reservation_window(
+    if public.facility_accepts_reservation_window(
       v_facility,
       timestamp '2028-02-15 22:00' at time zone 'America/Los_Angeles',
       timestamp '2028-02-16 06:00' at time zone 'America/Los_Angeles'
-    ) then raise exception 'TIME FAIL: overnight exact boundaries were rejected'; end if;
+    ) is distinct from true then raise exception 'TIME FAIL: overnight exact boundaries were rejected'; end if;
     if public.facility_accepts_reservation_window(
       v_facility,
       timestamp '2028-02-15 21:59' at time zone 'America/Los_Angeles',
       timestamp '2028-02-15 23:00' at time zone 'America/Los_Angeles'
-    ) then raise exception 'TIME FAIL: pre-overnight-opening window was accepted'; end if;
+    ) is distinct from false then raise exception 'TIME FAIL: pre-overnight-opening window was accepted'; end if;
 
     -- 2028-02-14 is Monday, 15 Tuesday, and 16 Wednesday.
     update public.facilities set operating_hours = '{
@@ -109,35 +111,35 @@ begin
         "tue":"closed","wed":"24_hours",
         "thu":"closed","fri":"closed","sat":"closed","sun":"closed"
       }}' where id = v_facility;
-    if not public.facility_accepts_reservation_window(
+    if public.facility_accepts_reservation_window(
       v_facility,
       timestamp '2028-02-14 09:00' at time zone 'America/Los_Angeles',
       timestamp '2028-02-14 17:00' at time zone 'America/Los_Angeles'
-    ) then raise exception 'TIME FAIL: weekly open day rejected'; end if;
+    ) is distinct from true then raise exception 'TIME FAIL: weekly open day rejected'; end if;
     if public.facility_accepts_reservation_window(
       v_facility,
       timestamp '2028-02-15 10:00' at time zone 'America/Los_Angeles',
       timestamp '2028-02-15 11:00' at time zone 'America/Los_Angeles'
-    ) then raise exception 'TIME FAIL: weekly closed day accepted'; end if;
-    if not public.facility_accepts_reservation_window(
+    ) is distinct from false then raise exception 'TIME FAIL: weekly closed day accepted'; end if;
+    if public.facility_accepts_reservation_window(
       v_facility,
       timestamp '2028-02-16 00:00' at time zone 'America/Los_Angeles',
       timestamp '2028-02-17 00:00' at time zone 'America/Los_Angeles'
-    ) then raise exception 'TIME FAIL: weekly 24-hour day rejected'; end if;
+    ) is distinct from true then raise exception 'TIME FAIL: weekly 24-hour day rejected'; end if;
     if public.facility_accepts_reservation_window(
       v_facility,
       timestamp '2028-02-14 16:00' at time zone 'America/Los_Angeles',
       timestamp '2028-02-16 01:00' at time zone 'America/Los_Angeles'
-    ) then raise exception 'TIME FAIL: multi-day window crossed a closure'; end if;
+    ) is distinct from false then raise exception 'TIME FAIL: multi-day window crossed a closure'; end if;
 
     update public.facilities
        set operating_hours = '{"type":"24_hours"}'
      where id = v_facility;
-    if not public.facility_accepts_reservation_window(
+    if public.facility_accepts_reservation_window(
       v_facility,
       timestamptz '2026-03-07 00:00:00+00',
       timestamptz '2026-03-10 00:00:00+00'
-    ) then raise exception 'TIME FAIL: multi-day 24-hour DST window rejected'; end if;
+    ) is distinct from true then raise exception 'TIME FAIL: multi-day 24-hour DST window rejected'; end if;
 
     -- Prove the same predicate hides spaces and blocks authoritative creation.
     select s.id into v_space
@@ -183,7 +185,7 @@ begin
     end;
 
     execute format('set local role %I', v_original_role);
-    if public.safe_timezone('America/Los_Angeles') <> 'America/Los_Angeles' then
+    if public.safe_timezone('America/Los_Angeles') is distinct from 'America/Los_Angeles' then
       raise exception 'TIME FAIL: canonical report timezone changed';
     end if;
     select count(*) into v_count from public.facilities f

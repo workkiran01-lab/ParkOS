@@ -9,6 +9,62 @@ const url = assertLoopbackDatabaseUrl(process.env.PARKOS_TEST_DATABASE_URL)
 const invoiceVerifier =
   'supabase/dev-only/20260903000000_verify_invoice_paid.sql'
 const cases = [
+  ...[
+    ['daily boundaries', '2028-02-15 14:00:00+00', 'exact daily boundaries'],
+    ['before opening', '2028-02-15 13:59:00+00', 'before-opening window'],
+    ['after closing', '2028-02-16 05:00:00+00', 'after-closing window'],
+    [
+      'overnight boundaries',
+      '2028-02-16 06:00:00+00',
+      'overnight exact boundaries',
+    ],
+    [
+      'before overnight opening',
+      '2028-02-16 05:59:00+00',
+      'pre-overnight-opening window',
+    ],
+    ['weekly open', '2028-02-14 17:00:00+00', 'weekly open day'],
+    ['weekly closed', '2028-02-15 18:00:00+00', 'weekly closed day'],
+    ['weekly full day', '2028-02-16 08:00:00+00', 'weekly 24-hour day'],
+    [
+      'multiple days with closure',
+      '2028-02-15 00:00:00+00',
+      'multi-day window crossed',
+    ],
+    [
+      'multiple days across DST',
+      '2026-03-07 00:00:00+00',
+      'multi-day 24-hour DST window',
+    ],
+  ].map(([label, instant, witness]) => ({
+    name: `Facility time rejects null: ${label}`,
+    function: 'facility_accepts_reservation_window',
+    pattern: /\nbegin\n/,
+    replacement: `\nbegin\n  if p_start = timestamptz '${instant}' then return null; end if;\n`,
+    verifier: 'supabase/dev-only/20260907020000_verify_facility_time.sql',
+    witness: `TIME FAIL: ${witness}`,
+  })),
+  ...[
+    ['2026-01-15 10:30', 'normal conversion'],
+    ['2026-11-01 01:30', 'fall-back overlap'],
+  ].map(([local, witness]) => ({
+    name: `Facility time rejects null: ${witness}`,
+    function: 'facility_local_to_utc',
+    pattern: /\nbegin\n/,
+    replacement: `\nbegin\n  if p_local = timestamp '${local}' then return null; end if;\n`,
+    verifier: 'supabase/dev-only/20260907020000_verify_facility_time.sql',
+    witness: `TIME FAIL: ${witness}`,
+  })),
+  {
+    name: 'Facility time rejects null: IANA validation',
+    function: 'is_valid_iana_timezone',
+    pattern: /select exists \(/,
+    replacement:
+      "select case when p_timezone = 'UTC' then null else true end and exists (",
+    verifier: 'supabase/dev-only/20260907020000_verify_facility_time.sql',
+    witness:
+      'TIME FAIL: IANA timezone validation disagrees with policy for UTC',
+  },
   ...['CHECK1', 'CHECK2', 'CHECK3', 'CHECK4'].map((check) => ({
     name: `Overstay ${check} rejects empty pricing`,
     function: 'calculate_overstay',
