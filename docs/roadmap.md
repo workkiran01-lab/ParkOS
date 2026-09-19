@@ -6,6 +6,34 @@ first — this file tracks work, not architecture.
 
 ## Known gaps (should resolve before real launch)
 
+- **CI and production do not share a privilege model, and neither can check the other.**
+  Hosted Supabase ships `ALTER DEFAULT PRIVILEGES` granting `anon`, `authenticated` and
+  `service_role` on every new table in `public`. The local stack CI runs against does
+  not: `supabase/config.toml` leaves `auto_expose_new_tables` unset, which its own
+  comment describes as "new entities are NOT auto-exposed, matching the new cloud
+  default". In CI the grants are therefore exactly what the migrations issue and
+  nothing more. The gap is asymmetric and cuts both ways.
+  - **Code relying on the hosted defaults passes in prod and fails in CI.**
+    `scripts/concurrency-test.mjs` did exactly this. Written against a hosted project
+    as `service_role`, it broke the moment `8f57211` pointed it at the local stack,
+    because here `service_role` holds only `customers`, `permits`, `receipts`,
+    `booth_payments` and `permit_payments` -- the core tables are granted to
+    `authenticated` alone (`20260819040000:193`, `20260819060000:343`). It failed with
+    `permission denied for table spaces`, which reads like a bug in the test rather
+    than a difference between two environments.
+  - **CI cannot catch over-permissioning that exists only in prod.** The same default
+    privileges hand `anon` `arwdDxtm` on every new table, with RLS the only thing in
+    the way. A verifier run against the local stack sees a schema where that grant was
+    never made, so it reports clean no matter what the real database looks like.
+    `verify_no_anon_execute.sql` says as much in its own "EXTENDING THIS" note.
+    The consequence is that the RLS and ACL verifiers prove something weaker than they
+    appear to: they prove the migrations' explicit grants are correct, not that the
+    deployed database's effective grants are. Closing it means either running the
+    verifiers against the real project, or setting `auto_expose_new_tables = true` so the
+    local stack reproduces the hosted default and the verifiers see the same schema prod
+    has. The field is deprecated and removed on 2026-10-30, after which the two converge
+    on the always-revoked behaviour -- at which point prod needs the explicit grants the
+    migrations already issue, and that transition deserves its own check.
 - **The Week 1 permit migrations and the Stripe webhook deploy are one operation, not
   two.** Merging `booking/new-reservation` performs neither -- CI at `81293b2` has no
   `supabase functions deploy` step and no migration is applied by a push -- but the two
