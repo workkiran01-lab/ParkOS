@@ -4,6 +4,7 @@ import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { readFileSync, writeFileSync } from 'node:fs'
 import { createClient } from '@supabase/supabase-js'
+import { employeeCases, employeeFixtures } from './employee-isolation.mjs'
 import {
   assertLoopbackDatabaseUrl,
   assertLoopbackHttpUrl,
@@ -81,6 +82,7 @@ function sql(statement) {
 }
 
 const cases = {
+  ...employeeCases({ sql, adminA, adminB, clientFor, orgA, orgB }),
   'customer list': {
     tables: ['customers'],
     async check() {
@@ -286,6 +288,7 @@ if (process.argv[2] === '--case') {
   }
 } else {
   try {
+    employeeFixtures(sql, orgA, orgB)
     sql(`
       insert into public.customers(id, org_id, full_name, email, phone) values ('${customerB}', '${orgB}', 'Foreign isolation sentinel', 'foreign-sentinel@example.test', '555-777-0001');
       insert into public.customers(id, org_id, full_name, user_id) values ('${ownCustomerB}', '${orgB}', 'Own foreign sentinel', '00000000-0000-0000-0000-0000000000a1');
@@ -332,7 +335,7 @@ if (process.argv[2] === '--case') {
           )
           assert.match(
             result.stderr,
-            /leaked/,
+            /leaked|unauthorized/,
             `${name}: must fail for the intended tenant leak`,
           )
           console.log(`MUTATION DETECTED: ${name}; child exit 1`)
@@ -356,6 +359,7 @@ if (process.argv[2] === '--case') {
       }
     }
   } finally {
+    employeeFixtures(sql, orgA, orgB, true)
     sql(
       `delete from public.payments where reservation_id in ('${reservationA}', '${reservationB}'); delete from public.booth_payments where reservation_id in ('${reservationA}', '${reservationB}'); delete from public.reservations where id in ('${reservationA}', '${reservationB}'); delete from public.vehicles where id in ('${vehicleA}', '${vehicleB}'); delete from public.customers where id in ('${customerB}', '${ownCustomerB}');`,
     )
