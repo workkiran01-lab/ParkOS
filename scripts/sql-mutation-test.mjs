@@ -9,6 +9,16 @@ const url = assertLoopbackDatabaseUrl(process.env.PARKOS_TEST_DATABASE_URL)
 const invoiceVerifier =
   'supabase/dev-only/20260903000000_verify_invoice_paid.sql'
 const cases = [
+  {
+    name: 'Invitations reject SQL NULL email bypass',
+    function: 'accept_invite',
+    pattern:
+      /lower\(trim\(v_user_email\)\) is distinct from lower\(trim\(v_invite_email\)\)/,
+    replacement: 'lower(trim(v_user_email)) <> lower(trim(v_invite_email))',
+    verifier: 'supabase/dev-only/DEV_ONLY_verify_rls_isolation.sql',
+    witness:
+      'CHECK14 FAIL: missing or mismatched email accepted an admin invitation',
+  },
   ...[false, true].map((defaults) => ({
     name: `Client TRUNCATE rejects ${defaults ? 'unsafe future defaults' : 'unsafe existing grants'}`,
     scriptPattern: 'begin;',

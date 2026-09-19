@@ -1432,6 +1432,51 @@ begin
   raise notice 'CHECK13 PASS: last active admin protected; non-last admin removal allowed';
 end $$;
 
+-- CHECK14: invitations bind to the authenticated user's actual email.
+do $$
+declare
+  v_user uuid := 'ae000000-0000-0000-0000-000000000001';
+  v_token uuid := 'ae000000-0000-0000-0000-000000000002';
+  v_email text;
+  v_org uuid;
+begin
+  insert into auth.users(id,aud,role,email)
+  values (v_user,'authenticated','authenticated',null);
+  insert into public.invites(org_id,email,role,token,invited_by)
+  values ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa','intended@example.test','admin',
+          v_token,'00000000-0000-0000-0000-0000000000a1');
+  foreach v_email in array array[null::text, 'different@example.test'] loop
+    update auth.users set email = v_email where id = v_user;
+    perform set_config('request.jwt.claims',
+      '{"sub":"ae000000-0000-0000-0000-000000000001","role":"authenticated"}', true);
+    perform set_config('request.jwt.claim.sub', v_user::text, true);
+    set local role authenticated;
+    begin
+      perform public.accept_invite(v_token);
+      raise exception 'CHECK14 FAIL: missing or mismatched email accepted an admin invitation';
+    exception when sqlstate 'P0001' then
+      if sqlerrm <> 'INVITE_EMAIL_MISMATCH' then raise; end if;
+    end;
+    reset role;
+    if exists (select 1 from public.memberships where user_id = v_user)
+       or exists (select 1 from public.profiles where id = v_user)
+       or exists (select 1 from public.invites where token = v_token and accepted_at is not null) then
+      raise exception 'CHECK14 FAIL: rejected invite left membership/profile/acceptance writes';
+    end if;
+  end loop;
+  update auth.users set email = 'INTENDED@example.test' where id = v_user;
+  set local role authenticated;
+  select public.accept_invite(v_token) into v_org;
+  reset role;
+  if v_org is distinct from 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'::uuid
+     or (select count(*) from public.memberships where user_id = v_user and org_id = v_org and role = 'admin') <> 1
+     or (select count(*) from public.profiles where id = v_user and org_id = v_org) <> 1
+     or (select count(*) from public.invites where token = v_token and accepted_at is not null) <> 1 then
+    raise exception 'CHECK14 FAIL: matching email did not accept atomically';
+  end if;
+  raise notice 'CHECK14 PASS: null/wrong email refused without writes; matching email accepted atomically';
+end $$;
+
 rollback;
 
 -- The Management API suppresses RAISE NOTICE output. If every assertion above
@@ -1454,6 +1499,7 @@ from (values
   ('CHECK9',  'PASS: payments isolated/read-only; webhook service role atomic and idempotent'),
   ('CHECK10', 'PASS: cross-org check-in/out denied; vehicle_photos + storage objects org-scoped'),
   ('CHECK12', 'PASS: permit roles/RLS isolated; active permit blocks reservations; cancel releases hold'),
-  ('CHECK13', 'PASS: last active admin protected; non-last admin removal allowed')
+  ('CHECK13', 'PASS: last active admin protected; non-last admin removal allowed'),
+  ('CHECK14', 'PASS: null/wrong invite emails refused; matching email accepted atomically')
 ) as checks(check_name, result)
 order by check_name;
