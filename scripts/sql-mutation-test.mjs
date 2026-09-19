@@ -10,6 +10,30 @@ const invoiceVerifier =
   'supabase/dev-only/20260903000000_verify_invoice_paid.sql'
 const cases = [
   ...[
+    [
+      'table read',
+      'revoke select on public.reservations from service_role;',
+      'permission denied for table reservations',
+    ],
+    [
+      'sequence',
+      'revoke usage on sequence public.receipts_number_seq from service_role;',
+      'permission denied for sequence receipts_number_seq',
+    ],
+    [
+      'tenant isolation',
+      'create policy verifier_receipt_leak on public.receipts for select to authenticated using (true);',
+      'CHECK16 FAIL: receipt leaked to another tenant',
+    ],
+  ].map(([label, sql, witness]) => ({
+    name: `Receipt service rejects broken ${label}`,
+    scriptPattern: 'begin;',
+    scriptReplacement: 'begin;\n' + sql,
+    verifier: 'supabase/dev-only/DEV_ONLY_verify_rls_isolation.sql',
+    isolateCheck: 'CHECK16',
+    witness,
+  })),
+  ...[
     'create_organization_with_admin',
     'public_ensure_customer',
     'accept_invite',

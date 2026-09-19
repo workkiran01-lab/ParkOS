@@ -1536,6 +1536,57 @@ begin
   raise notice 'CHECK15 PASS: all three onboarding RPCs enforce deactivation and allow active accounts';
 end $$;
 
+-- CHECK16: execute the receipt service's real table/sequence path under its
+-- native SQL role, then test both own-org access and a foreign-tenant probe.
+do $$
+declare
+  v_res uuid := 'ae000000-0000-0000-0000-000000000010';
+  v_payment uuid := 'ae000000-0000-0000-0000-000000000011';
+  v_receipt uuid;
+  v_number text;
+  v_count integer;
+begin
+  insert into public.reservations(id,org_id,facility_id,space_id,customer_id,during,status,booking_code,price_breakdown,total_cents)
+  select v_res, s.org_id, z.facility_id, s.id, 'ca000001-0000-0000-0000-000000000001',
+    tstzrange('2030-01-16 18:00:00+00','2030-01-16 19:00:00+00','[)'),
+    'confirmed','PKS-RCPTAA','{"currency":"USD","line_items":[],"total_cents":500}',500
+  from public.spaces s join public.zones z on z.id = s.zone_id
+  where z.facility_id = '11111111-1111-1111-1111-111111111111' order by s.id limit 1;
+  insert into public.payments(id,org_id,reservation_id,stripe_checkout_session_id,amount_cents,currency,status)
+  values (v_payment,'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',v_res,'cs_verifier_receipt_service',500,'USD','succeeded');
+  set local role service_role;
+  select count(*) into v_count from public.reservations r
+    join public.facilities f on f.id = r.facility_id
+    join public.spaces s on s.id = r.space_id
+    join public.zones z on z.id = s.zone_id
+    join public.customers c on c.id = r.customer_id
+   where r.id = v_res and r.total_cents = 500 and r.booking_code = 'PKS-RCPTAA'
+     and f.timezone = 'America/Los_Angeles' and c.org_id = r.org_id;
+  if v_count <> 1 then raise exception 'CHECK16 FAIL: service receipt details missing'; end if;
+  insert into public.receipts(org_id,reservation_id,payment_id,storage_path)
+  values ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',v_res,v_payment,'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa/verifier.pdf')
+  returning id, receipt_number into v_receipt, v_number;
+  if v_number is null or v_number not like 'RCPT-%' then
+    raise exception 'CHECK16 FAIL: receipt sequence did not generate a number';
+  end if;
+  reset role;
+  perform set_config('request.jwt.claims','{"sub":"00000000-0000-0000-0000-0000000000a2","role":"authenticated"}',true);
+  perform set_config('request.jwt.claim.sub','00000000-0000-0000-0000-0000000000a2',true);
+  set local role authenticated;
+  if (select count(*) from public.receipts where id = v_receipt) <> 1 then
+    raise exception 'CHECK16 FAIL: owning org cannot read its receipt';
+  end if;
+  reset role;
+  perform set_config('request.jwt.claims','{"sub":"00000000-0000-0000-0000-0000000000b1","role":"authenticated"}',true);
+  perform set_config('request.jwt.claim.sub','00000000-0000-0000-0000-0000000000b1',true);
+  set local role authenticated;
+  if (select count(*) from public.receipts where id = v_receipt) <> 0 then
+    raise exception 'CHECK16 FAIL: receipt leaked to another tenant';
+  end if;
+  reset role;
+  raise notice 'CHECK16 PASS: service receipt read/insert/sequence works; own org reads; foreign org denied';
+end $$;
+
 rollback;
 
 -- The Management API suppresses RAISE NOTICE output. If every assertion above
@@ -1560,6 +1611,7 @@ from (values
   ('CHECK12', 'PASS: permit roles/RLS isolated; active permit blocks reservations; cancel releases hold'),
   ('CHECK13', 'PASS: last active admin protected; non-last admin removal allowed'),
   ('CHECK14', 'PASS: null/wrong invite emails refused; matching email accepted atomically'),
-  ('CHECK15', 'PASS: deactivated onboarding refused; active onboarding preserved')
+  ('CHECK15', 'PASS: deactivated onboarding refused; active onboarding preserved'),
+  ('CHECK16', 'PASS: service receipt dependencies explicit; receipt reads tenant-isolated')
 ) as checks(check_name, result)
 order by check_name;
