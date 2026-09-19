@@ -10,6 +10,28 @@ const invoiceVerifier =
   'supabase/dev-only/20260903000000_verify_invoice_paid.sql'
 const cases = [
   {
+    name: 'Booth settlement rejects missing collection balance',
+    function: 'record_booth_payment',
+    pattern: /return query select v_payment_id, v_balance - p_amount_cents;/,
+    replacement: 'return query select v_payment_id, null::integer;',
+    verifier: 'supabase/dev-only/20260825010000_verify_booth_payments.sql',
+    witness: 'CHECK8 FAIL: balance after $20',
+  },
+  ...['v_final', 'v_overstay', 'v_collected', 'v_balance'].map((field) => ({
+    name: `Booth settlement rejects missing checkout ${field}`,
+    function: 'check_out_reservation',
+    pattern:
+      /return query select v_final, v_overstay, v_collected, v_balance, v_breakdown;/,
+    replacement:
+      'return query select ' +
+      ['v_final', 'v_overstay', 'v_collected', 'v_balance', 'v_breakdown']
+        .map((name) => (name === field ? 'null::integer' : name))
+        .join(', ') +
+      ';',
+    verifier: 'supabase/dev-only/20260825010000_verify_booth_payments.sql',
+    witness: 'CHECK9 FAIL:',
+  })),
+  {
     name: 'Correction preview rejects duplicate affected reservations',
     function: 'reservation_correction_scope',
     pattern: /    v_affected;\nend;/,

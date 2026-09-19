@@ -377,10 +377,10 @@ begin
     from public.record_booth_payment(
       'ff000000-0000-0000-0000-00000000e004', 2000, 'cash', 'partial at gate');
 
-  if v_balance <> 3000 then
+  if v_balance is distinct from 3000 then
     raise exception 'CHECK8 FAIL: balance after $20 = %c, expected 3000c', v_balance;
   end if;
-  if public.reservation_balance_cents('ff000000-0000-0000-0000-00000000e004') <> 3000 then
+  if public.reservation_balance_cents('ff000000-0000-0000-0000-00000000e004') is distinct from 3000 then
     raise exception 'CHECK8 FAIL: stored balance disagrees with the returned one';
   end if;
 
@@ -420,21 +420,21 @@ begin
       '2026-08-26 02:00:00+00',
       'card');
 
-  if v_overstay <> 1200 then
+  if v_overstay is distinct from 1200 then
     raise exception 'CHECK9 FAIL: overstay = %c, expected the 1200c cap', v_overstay;
   end if;
-  if v_final <> 6200 then
+  if v_final is distinct from 6200 then
     raise exception 'CHECK9 FAIL: final total = %c, expected 6200c', v_final;
   end if;
   -- 6200 owed, 2000 already taken in CHECK8, so 4200 settles it.
-  if v_collected <> 4200 or v_balance <> 0 then
+  if v_collected is distinct from 4200 or v_balance is distinct from 0 then
     raise exception 'CHECK9 FAIL: collected %c leaving %c, expected 4200c leaving 0c',
       v_collected, v_balance;
   end if;
 
   select status into v_status from public.reservations
    where id = 'ff000000-0000-0000-0000-00000000e004';
-  if v_status <> 'completed' then
+  if v_status is distinct from 'completed' then
     raise exception 'CHECK9 FAIL: reservation is % after check-out', v_status;
   end if;
 
