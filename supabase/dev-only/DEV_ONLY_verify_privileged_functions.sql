@@ -7,8 +7,10 @@
 
 begin;
 
-create temporary table verifier_privileged_catalog on commit drop as
-with coverage(proname, exposure, scope, verifier) as (
+-- One policy/coverage declaration. Both directions of the catalog comparison
+-- read this table; a second list cannot drift away from the declared coverage.
+create temporary table verifier_privileged_coverage on commit drop as
+select * from (
   values
     ('abandon_pending_permit', 'caller', 'tenant', 'DEV_ONLY_verify_permit_issuance.sql'),
     ('accept_invite', 'caller', 'identity', 'DEV_ONLY_verify_rls_isolation.sql'),
@@ -47,8 +49,10 @@ with coverage(proname, exposure, scope, verifier) as (
     ('request_permit_cancellation', 'caller', 'tenant', 'DEV_ONLY_verify_permit_cancellation.sql'),
     ('reservation_balance_cents', 'caller', 'tenant', '20260825010000_verify_booth_payments.sql'),
     ('reservation_correction_scope', 'caller', 'tenant', '20260907010000_verify_reservation_corrections.sql')
-),
-catalog as (
+) as coverage(proname, exposure, scope, verifier);
+
+create temporary table verifier_privileged_catalog on commit drop as
+with catalog as (
   select p.oid,
          p.proname,
          pg_catalog.pg_get_function_identity_arguments(p.oid) as identity_args,
@@ -68,11 +72,17 @@ catalog as (
    where n.nspname = 'public'
      and p.prokind = 'f'
      and p.prosecdef
-     and pg_catalog.pg_get_userbyid(p.proowner) = 'postgres'
+     -- Ownership can change. Extension membership, not owner name, separates
+     -- application functions from platform-provided extension functions.
+     and not exists (
+       select 1 from pg_catalog.pg_depend d
+        where d.classid = 'pg_catalog.pg_proc'::regclass
+          and d.objid = p.oid and d.deptype = 'e'
+     )
 )
 select c.*, coverage.exposure, coverage.scope, coverage.verifier
   from catalog c
-  left join coverage using (proname);
+  left join verifier_privileged_coverage coverage using (proname);
 
 do $$
 declare
@@ -105,23 +115,7 @@ begin
 
   select string_agg(coverage.proname, ', ' order by coverage.proname)
     into v_stale
-    from (values
-      ('abandon_pending_permit'), ('accept_invite'), ('calculate_overstay'),
-      ('cancel_permit'), ('cancel_reservation'), ('check_in_reservation'),
-      ('check_in_walk_in'), ('check_out_reservation'), ('confirm_reservation'),
-      ('correct_reservation'), ('create_facility_with_zones_and_spaces'),
-      ('create_organization_with_admin'), ('deactivate_account'),
-      ('extend_reservation'), ('generate_booking_code'), ('get_my_permits'),
-      ('get_my_reservations'), ('get_public_availability'), ('get_public_facility'),
-      ('get_user_role'), ('has_any_role'), ('is_account_deactivated'),
-      ('issue_permit'), ('mark_no_shows'), ('preserve_last_active_admin'), ('process_stripe_event'),
-      ('process_stripe_subscription_event'), ('public_create_reservation'),
-      ('public_ensure_customer'), ('public_quote_reservation'),
-      ('record_booth_payment'), ('record_permit_payment'),
-      ('record_permit_refund'), ('refund_booth_payment'),
-      ('request_permit_cancellation'), ('reservation_balance_cents'),
-      ('reservation_correction_scope')
-    ) as coverage(proname)
+    from verifier_privileged_coverage coverage
    where not exists (
      select 1 from verifier_privileged_catalog catalog
       where catalog.proname = coverage.proname

@@ -9,6 +9,27 @@ const url = assertLoopbackDatabaseUrl(process.env.PARKOS_TEST_DATABASE_URL)
 const invoiceVerifier =
   'supabase/dev-only/20260903000000_verify_invoice_paid.sql'
 const cases = [
+  ...[false, true].map((changeOwner) => ({
+    name: `Privileged catalog catches throwaway definer${changeOwner ? ' under another owner' : ''}`,
+    scriptPattern: 'begin;',
+    scriptReplacement: `begin;
+      create function public.verifier_uncovered_definer() returns integer
+      language sql security definer set search_path = '' as 'select 1';
+      revoke all on function public.verifier_uncovered_definer() from public, anon, authenticated, service_role;
+      ${changeOwner ? 'alter function public.verifier_uncovered_definer() owner to service_role;' : ''}`,
+    verifier: 'supabase/dev-only/DEV_ONLY_verify_privileged_functions.sql',
+    witness:
+      'SECURITY DEFINER function has no verifier coverage: verifier_uncovered_definer',
+  })),
+  {
+    name: 'Privileged catalog catches stale coverage from the same declaration',
+    scriptPattern: 'as coverage(proname, exposure, scope, verifier);',
+    scriptReplacement: `as coverage(proname, exposure, scope, verifier);
+      insert into verifier_privileged_coverage values ('verifier_stale_name', 'internal', 'internal', 'missing.sql');`,
+    verifier: 'supabase/dev-only/DEV_ONLY_verify_privileged_functions.sql',
+    witness:
+      'SECURITY DEFINER coverage names no deployed function: verifier_stale_name',
+  },
   {
     name: 'Last admin rejects removed membership safeguard',
     scriptPattern: 'begin;',
