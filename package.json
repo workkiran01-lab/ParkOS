@@ -39,7 +39,8 @@
     "format": "prettier --write .",
     "format:check": "node scripts/check-format.mjs",
     "preview": "vite preview",
-    "test:webhook-mutations": "node scripts/webhook-mutation-test.mjs"
+    "test:webhook-mutations": "node scripts/webhook-mutation-test.mjs",
+    "test:sql-mutations": "node scripts/sql-mutation-test.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.112.3",

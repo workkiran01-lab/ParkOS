@@ -123,5 +123,6 @@ jobs:
             | sed 's/="\(.*\)"$/=\1/' >> "$GITHUB_ENV"
       - run: npm run db:seed:dev
       - run: npm run test:financial
+      - run: npm run test:sql-mutations
       - if: always()
         run: npx supabase stop --no-backup
