@@ -6,6 +6,42 @@ first — this file tracks work, not architecture.
 
 ## Known gaps (should resolve before real launch)
 
+- **The Week 1 permit migrations and the Stripe webhook deploy are one operation, not
+  two.** Merging `booking/new-reservation` performs neither -- CI at `81293b2` has no
+  `supabase functions deploy` step and no migration is applied by a push -- but the two
+  halves are coupled and the coupling is invisible from either side alone.
+  `ed0b7f9` (invoice.paid removed in the Stripe Basil API, payload readers extracted)
+  and `7ccbbd1` (Stripe SDK and API version pinned) rewrite the dispatch in
+  `supabase/functions/stripe-webhook/index.ts`: it gains `invoice.payment_succeeded`
+  and `invoice.paid` as subscribed types and routes both to `processPaidInvoice` ->
+  `record_permit_payment`. The version on `main` before the merge subscribes to
+  neither -- its list is `customer.subscription.*` and `invoice.payment_failed` only --
+  and has no `processPaidInvoice` at all. On the database side,
+  `20260903000000_permit_payments_invoice_paid.sql` documents that new routing,
+  `20260904000000_drop_dead_invoice_paid_branch.sql` drops the now-unreachable
+  `invoice.paid` arm from `process_stripe_subscription_event` **on the stated premise
+  that "the webhook is the function's only production caller, and it never routes
+  invoice.paid here"**, and `20260905000000_stripe_event_unresolved_payment.sql` makes
+  an unresolvable charge answer 200 rather than 500.
+  **Migrations applied without the deploy is the dangerous order, and it fails
+  silently.** The deployed webhook subscribes to neither invoice event, so a permit
+  subscription invoice settles at Stripe, no handler runs, nothing raises, and
+  `permit_payments` stays empty -- the exact "money collected, ledger records nothing"
+  shape `20260829000000` and `20260903000000` exist to close, reintroduced by shipping
+  half. Worse, `process_stripe_subscription_event` claims an event into
+  `processed_stripe_events` _before_ dispatching on type and returns `processed: true`
+  from its final `else`, so an event that lands in the wrong half is not recoverable by
+  redelivery: a replay answers `duplicate_event`.
+  The reverse order is safe by comparison. A new webhook calling a
+  `record_permit_payment` that does not exist yet raises, the webhook 500s, and Stripe
+  retries until the migration lands -- loud and self-healing.
+  So: apply the ten migrations and deploy the five Edge Functions in one window,
+  migrations first, then reconcile `permit_payments` against Stripe for the window.
+  `7ccbbd1` adds a third moving part the repo cannot see -- webhook payloads render at
+  the endpoint API version set in the Stripe Dashboard, so the pin in code does not by
+  itself determine what arrives.
+  This is a production-deployment ordering constraint, not a merge blocker: the merge
+  itself changes nothing in production.
 - **A direct-SQL staff session can switch the operating-hours gate off for scheduled bookings.**
   `20260909000000_exempt_walk_in_from_operating_hours.sql` exempts walk-in check-in with a
   transaction-scoped GUC: `public.check_in_walk_in` runs
