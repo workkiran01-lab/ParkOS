@@ -502,6 +502,12 @@ select pg_temp.capture(3);
 do $$
 declare r record; v integer := 0;
 begin
+  if (select count(*) from expected) <> 4
+     or (select count(*) from actual) <> 4
+     or exists (select stage from expected except all select stage from actual)
+     or exists (select stage from actual except all select stage from expected) then
+    raise exception 'CHECK4 FAIL: refund matrix must contain each of stages 0 through 3 exactly once';
+  end if;
   for r in
     select e.stage, x.col, x.exp, x.got
       from expected e

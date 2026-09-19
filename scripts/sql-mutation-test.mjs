@@ -10,6 +10,32 @@ const invoiceVerifier =
   'supabase/dev-only/20260903000000_verify_invoice_paid.sql'
 const cases = [
   ...[
+    [
+      'refund',
+      '20260906000000_verify_refund_ledgers.sql',
+      '-- CHECK 4 -- THE TRAP',
+      'CHECK4',
+    ],
+    [
+      'state',
+      '20260904000000_verify_dead_branch_removed.sql',
+      '-- CHECK 1 -- every cell',
+      'CHECK1',
+    ],
+  ].flatMap(([label, file, anchor, check]) =>
+    [
+      'delete from actual;',
+      'delete from actual where ctid = (select ctid from actual limit 1);',
+      'insert into actual select * from actual limit 1;',
+    ].map((sql, index) => ({
+      name: `${label} matrix rejects ${['empty', 'missing', 'duplicate'][index]} observations`,
+      scriptPattern: anchor,
+      scriptReplacement: sql + '\n' + anchor,
+      verifier: 'supabase/dev-only/' + file,
+      witness: `${check} FAIL:`,
+    })),
+  ),
+  ...[
     ['daily boundaries', '2028-02-15 14:00:00+00', 'exact daily boundaries'],
     ['before opening', '2028-02-15 13:59:00+00', 'before-opening window'],
     ['after closing', '2028-02-16 05:00:00+00', 'after-closing window'],
@@ -189,28 +215,30 @@ const selected = cases.filter(
 )
 assert.ok(selected.length, 'No matching SQL mutations')
 for (const mutation of selected) {
-  const definition = psql(
-    `select pg_get_functiondef(oid) from pg_proc where pronamespace = 'public'::regnamespace and proname = '${mutation.function}';`,
-    true,
-  )
-  assert.equal(definition.status, 0, definition.output)
-  const original = definition.stdout.replaceAll('\r', '')
-  let changed
-  if (mutation.emptyFunction) {
-    assert.match(original, /LANGUAGE (sql|plpgsql)/)
-    changed = original
-      .replace('LANGUAGE sql', 'LANGUAGE plpgsql')
-      .replace(
-        /AS \$function\$[\s\S]*?\$function\$/,
-        () => 'AS $function$ BEGIN RETURN; END; $function$',
-      )
-  } else {
-    assert.match(
-      original,
-      mutation.pattern,
-      `${mutation.name}: missing mutation anchor`,
+  let changed = ''
+  if (mutation.function) {
+    const definition = psql(
+      `select pg_get_functiondef(oid) from pg_proc where pronamespace = 'public'::regnamespace and proname = '${mutation.function}';`,
+      true,
     )
-    changed = original.replace(mutation.pattern, mutation.replacement)
+    assert.equal(definition.status, 0, definition.output)
+    const original = definition.stdout.replaceAll('\r', '')
+    if (mutation.emptyFunction) {
+      assert.match(original, /LANGUAGE (sql|plpgsql)/)
+      changed = original
+        .replace('LANGUAGE sql', 'LANGUAGE plpgsql')
+        .replace(
+          /AS \$function\$[\s\S]*?\$function\$/,
+          () => 'AS $function$ BEGIN RETURN; END; $function$',
+        )
+    } else {
+      assert.match(
+        original,
+        mutation.pattern,
+        `${mutation.name}: missing mutation anchor`,
+      )
+      changed = original.replace(mutation.pattern, mutation.replacement)
+    }
   }
   let verifier = readFileSync(
     new URL('../' + mutation.verifier, import.meta.url),
@@ -227,8 +255,19 @@ for (const mutation of selected) {
   assert.match(verifier, /\brollback;/i)
   // Mutation and fixtures share one transaction. Even an assertion failure
   // rolls back the replacement function when psql disconnects.
+  let brokenVerifier = verifier
+  if (mutation.scriptPattern) {
+    assert.ok(
+      verifier.includes(mutation.scriptPattern),
+      'Missing script mutation anchor',
+    )
+    brokenVerifier = verifier.replace(
+      mutation.scriptPattern,
+      mutation.scriptReplacement,
+    )
+  }
   const broken = psql(
-    verifier.replace(/\bbegin;/i, () => 'begin;\n' + changed + ';\n'),
+    brokenVerifier.replace(/\bbegin;/i, () => 'begin;\n' + changed + ';\n'),
   )
   console.log(`MUTATION: ${mutation.name}\n${broken.output}`)
   assert.notEqual(broken.status, 0, `${mutation.name}: mutant survived`)

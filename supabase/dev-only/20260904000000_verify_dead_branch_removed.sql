@@ -118,6 +118,12 @@ end $$;
 do $$
 declare r record; v int := 0;
 begin
+  if (select count(*) from expected) <> 16
+     or (select count(*) from actual) <> 16
+     or exists (select seq from expected except all select seq from actual)
+     or exists (select seq from actual except all select seq from expected) then
+    raise exception 'CHECK1 FAIL: state matrix must contain each of 16 scenarios exactly once';
+  end if;
   for r in
     select e.seq, e.event_type, e.start_status,
            e.end_status as exp_status, a.end_status as got_status,
