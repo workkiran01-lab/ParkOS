@@ -36,8 +36,11 @@ import { Route as MyReservationsRouteImport } from './routes/my/reservations'
 import { Route as MySettingsRouteImport } from './routes/my/settings'
 import { Route as AppBookingManifestRouteImport } from './routes/app/booking/manifest'
 import { Route as AppBookingNewRouteImport } from './routes/app/booking/new'
+import { Route as AppCustomersIndexRouteImport } from './routes/app/customers/index'
 import { Route as AppFacilitiesIndexRouteImport } from './routes/app/facilities/index'
 import { Route as AppFacilitiesFacilityIdRouteImport } from './routes/app/facilities/$facilityId'
+import { Route as AppCustomersCustomerIdIndexRouteImport } from './routes/app/customers/$customerId/index'
+import { Route as AppCustomersCustomerIdBooksRouteImport } from './routes/app/customers/$customerId/books'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -174,6 +177,11 @@ const AppBookingNewRoute = AppBookingNewRouteImport.update({
   path: '/booking/new',
   getParentRoute: () => AppRoute,
 } as any)
+const AppCustomersIndexRoute = AppCustomersIndexRouteImport.update({
+  id: '/customers/',
+  path: '/customers/',
+  getParentRoute: () => AppRoute,
+} as any)
 const AppFacilitiesIndexRoute = AppFacilitiesIndexRouteImport.update({
   id: '/facilities/',
   path: '/facilities/',
@@ -184,6 +192,18 @@ const AppFacilitiesFacilityIdRoute = AppFacilitiesFacilityIdRouteImport.update({
   path: '/facilities/$facilityId',
   getParentRoute: () => AppRoute,
 } as any)
+const AppCustomersCustomerIdIndexRoute =
+  AppCustomersCustomerIdIndexRouteImport.update({
+    id: '/customers/$customerId/',
+    path: '/customers/$customerId/',
+    getParentRoute: () => AppRoute,
+  } as any)
+const AppCustomersCustomerIdBooksRoute =
+  AppCustomersCustomerIdBooksRouteImport.update({
+    id: '/customers/$customerId/books',
+    path: '/customers/$customerId/books',
+    getParentRoute: () => AppRoute,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -214,7 +234,10 @@ export interface FileRoutesByFullPath {
   '/app/booking/manifest': typeof AppBookingManifestRoute
   '/app/booking/new': typeof AppBookingNewRoute
   '/app/facilities/$facilityId': typeof AppFacilitiesFacilityIdRoute
+  '/app/customers/': typeof AppCustomersIndexRoute
   '/app/facilities/': typeof AppFacilitiesIndexRoute
+  '/app/customers/$customerId/books': typeof AppCustomersCustomerIdBooksRoute
+  '/app/customers/$customerId/': typeof AppCustomersCustomerIdIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -243,7 +266,10 @@ export interface FileRoutesByTo {
   '/app/booking/manifest': typeof AppBookingManifestRoute
   '/app/booking/new': typeof AppBookingNewRoute
   '/app/facilities/$facilityId': typeof AppFacilitiesFacilityIdRoute
+  '/app/customers': typeof AppCustomersIndexRoute
   '/app/facilities': typeof AppFacilitiesIndexRoute
+  '/app/customers/$customerId/books': typeof AppCustomersCustomerIdBooksRoute
+  '/app/customers/$customerId': typeof AppCustomersCustomerIdIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -275,7 +301,10 @@ export interface FileRoutesById {
   '/app/booking/manifest': typeof AppBookingManifestRoute
   '/app/booking/new': typeof AppBookingNewRoute
   '/app/facilities/$facilityId': typeof AppFacilitiesFacilityIdRoute
+  '/app/customers/': typeof AppCustomersIndexRoute
   '/app/facilities/': typeof AppFacilitiesIndexRoute
+  '/app/customers/$customerId/books': typeof AppCustomersCustomerIdBooksRoute
+  '/app/customers/$customerId/': typeof AppCustomersCustomerIdIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -308,7 +337,10 @@ export interface FileRouteTypes {
     | '/app/booking/manifest'
     | '/app/booking/new'
     | '/app/facilities/$facilityId'
+    | '/app/customers/'
     | '/app/facilities/'
+    | '/app/customers/$customerId/books'
+    | '/app/customers/$customerId/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -337,7 +369,10 @@ export interface FileRouteTypes {
     | '/app/booking/manifest'
     | '/app/booking/new'
     | '/app/facilities/$facilityId'
+    | '/app/customers'
     | '/app/facilities'
+    | '/app/customers/$customerId/books'
+    | '/app/customers/$customerId'
   id:
     | '__root__'
     | '/'
@@ -368,7 +403,10 @@ export interface FileRouteTypes {
     | '/app/booking/manifest'
     | '/app/booking/new'
     | '/app/facilities/$facilityId'
+    | '/app/customers/'
     | '/app/facilities/'
+    | '/app/customers/$customerId/books'
+    | '/app/customers/$customerId/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -577,6 +615,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppBookingNewRouteImport
       parentRoute: typeof AppRoute
     }
+    '/app/customers/': {
+      id: '/app/customers/'
+      path: '/customers'
+      fullPath: '/app/customers/'
+      preLoaderRoute: typeof AppCustomersIndexRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/app/facilities/': {
       id: '/app/facilities/'
       path: '/facilities'
@@ -589,6 +634,20 @@ declare module '@tanstack/react-router' {
       path: '/facilities/$facilityId'
       fullPath: '/app/facilities/$facilityId'
       preLoaderRoute: typeof AppFacilitiesFacilityIdRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/app/customers/$customerId/': {
+      id: '/app/customers/$customerId/'
+      path: '/customers/$customerId'
+      fullPath: '/app/customers/$customerId/'
+      preLoaderRoute: typeof AppCustomersCustomerIdIndexRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/app/customers/$customerId/books': {
+      id: '/app/customers/$customerId/books'
+      path: '/customers/$customerId/books'
+      fullPath: '/app/customers/$customerId/books'
+      preLoaderRoute: typeof AppCustomersCustomerIdBooksRouteImport
       parentRoute: typeof AppRoute
     }
   }
@@ -609,7 +668,10 @@ interface AppRouteChildren {
   AppBookingManifestRoute: typeof AppBookingManifestRoute
   AppBookingNewRoute: typeof AppBookingNewRoute
   AppFacilitiesFacilityIdRoute: typeof AppFacilitiesFacilityIdRoute
+  AppCustomersIndexRoute: typeof AppCustomersIndexRoute
   AppFacilitiesIndexRoute: typeof AppFacilitiesIndexRoute
+  AppCustomersCustomerIdBooksRoute: typeof AppCustomersCustomerIdBooksRoute
+  AppCustomersCustomerIdIndexRoute: typeof AppCustomersCustomerIdIndexRoute
 }
 
 const AppRouteChildren: AppRouteChildren = {
@@ -627,7 +689,10 @@ const AppRouteChildren: AppRouteChildren = {
   AppBookingManifestRoute: AppBookingManifestRoute,
   AppBookingNewRoute: AppBookingNewRoute,
   AppFacilitiesFacilityIdRoute: AppFacilitiesFacilityIdRoute,
+  AppCustomersIndexRoute: AppCustomersIndexRoute,
   AppFacilitiesIndexRoute: AppFacilitiesIndexRoute,
+  AppCustomersCustomerIdBooksRoute: AppCustomersCustomerIdBooksRoute,
+  AppCustomersCustomerIdIndexRoute: AppCustomersCustomerIdIndexRoute,
 }
 
 const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)

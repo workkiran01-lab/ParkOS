@@ -5,6 +5,7 @@ import {
   Outlet,
   redirect,
   useNavigate,
+  useRouterState,
 } from '@tanstack/react-router'
 import {
   BarChart3,
@@ -20,6 +21,7 @@ import {
   SquareParking,
   TicketCheck,
   UserCog,
+  Users,
   Warehouse,
   type LucideIcon,
 } from 'lucide-react'
@@ -62,6 +64,10 @@ export const Route = createFileRoute('/app')({
 })
 
 function AppLayout() {
+  const pathname = useRouterState({
+    select: (state) => state.location.pathname,
+  })
+  const selectedCustomerId = /^\/app\/customers\/([^/]+)/.exec(pathname)?.[1]
   const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>(
     () => {
       try {
@@ -236,6 +242,65 @@ function AppLayout() {
               )}
               {operations && (
                 <NavGroup
+                  label="Customer"
+                  collapsed={collapsed}
+                  expanded={expandedGroups.Customer !== false}
+                  onToggle={toggleGroup}
+                >
+                  <NavGroup
+                    label="Directory"
+                    collapsed={collapsed}
+                    expanded={expandedGroups.Directory !== false}
+                    onToggle={toggleGroup}
+                  >
+                    <NavItem
+                      to="/app/customers"
+                      label="Customer"
+                      icon={Users}
+                      collapsed={collapsed}
+                    />
+                    {selectedCustomerId && (
+                      <>
+                        <Link
+                          to="/app/customers/$customerId"
+                          params={{ customerId: selectedCustomerId }}
+                          title="Customer ID"
+                          activeOptions={{ exact: true }}
+                          className={cn(
+                            'sidebar-nav-link',
+                            collapsed && 'justify-center px-0',
+                          )}
+                          activeProps={{ className: 'sidebar-nav-link-active' }}
+                        >
+                          <UserCog
+                            className="size-[17px] shrink-0"
+                            aria-hidden="true"
+                          />
+                          {!collapsed && <span>Customer ID</span>}
+                        </Link>
+                        <Link
+                          to="/app/customers/$customerId/books"
+                          params={{ customerId: selectedCustomerId }}
+                          title="Books"
+                          className={cn(
+                            'sidebar-nav-link',
+                            collapsed && 'justify-center px-0',
+                          )}
+                          activeProps={{ className: 'sidebar-nav-link-active' }}
+                        >
+                          <ClipboardList
+                            className="size-[17px] shrink-0"
+                            aria-hidden="true"
+                          />
+                          {!collapsed && <span>Books</span>}
+                        </Link>
+                      </>
+                    )}
+                  </NavGroup>
+                </NavGroup>
+              )}
+              {operations && (
+                <NavGroup
                   label="Operations"
                   collapsed={collapsed}
                   expanded={expandedGroups.Operations !== false}
@@ -356,6 +421,7 @@ function NavGroup({
 }
 
 type AppPath =
+  | '/app/customers'
   | '/app/calendar'
   | '/app'
   | '/app/booking/manifest'
@@ -384,7 +450,7 @@ function NavItem({
   return (
     <Link
       to={to}
-      activeOptions={{ exact: to === '/app' }}
+      activeOptions={{ exact: to === '/app' || to === '/app/customers' }}
       title={collapsed ? label : undefined}
       className={cn('sidebar-nav-link', collapsed && 'justify-center px-0')}
       activeProps={{ className: 'sidebar-nav-link-active' }}
