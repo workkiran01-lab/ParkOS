@@ -26,6 +26,7 @@ select * from (
     ('create_organization_with_admin', 'caller', 'identity', 'DEV_ONLY_verify_rls_isolation.sql'),
     ('deactivate_account', 'caller', 'identity', 'DEV_ONLY_verify_rls_isolation.sql'),
     ('extend_reservation', 'caller', 'tenant', 'DEV_ONLY_verify_rls_isolation.sql'),
+    ('enforce_reservation_operating_hours', 'internal', 'tenant', '20260907020000_verify_facility_time.sql'),
     ('generate_booking_code', 'internal', 'internal', 'DEV_ONLY_verify_rls_isolation.sql'),
     ('get_my_permits', 'caller', 'identity', 'DEV_ONLY_verify_rls_isolation.sql'),
     ('get_my_reservations', 'caller', 'identity', 'DEV_ONLY_verify_rls_isolation.sql'),

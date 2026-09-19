@@ -15,6 +15,8 @@ declare
   v_count integer;
   v_result timestamptz;
   v_zone_case record;
+  v_walk_in uuid;
+  v_caller text;
 begin
   begin
     for v_zone_case in select * from (values
@@ -184,7 +186,74 @@ begin
       if sqlerrm <> 'OUTSIDE_OPERATING_HOURS' then raise; end if;
     end;
 
+    -- A direct-SQL staff session can set arbitrary custom GUCs. That must not
+    -- authorize a scheduled insert outside hours.
+    perform set_config('parkos.walk_in_checkin', 'on', true);
+    begin
+      perform public.create_reservation(v_space, v_customer, null,
+        '2028-02-15 18:00:00+00', '2028-02-15 19:00:00+00');
+      raise exception 'WALKIN FAIL: forged GUC bypassed scheduled operating hours';
+    exception when sqlstate 'P0001' then
+      if sqlerrm <> 'OUTSIDE_OPERATING_HOURS' then raise; end if;
+    end;
+    perform set_config('parkos.walk_in_checkin', 'off', true);
+
     execute format('set local role %I', v_original_role);
+    foreach v_caller in array array['anon','authenticated','service_role'] loop
+      if has_table_privilege(v_caller, 'public.walk_in_authorizations',
+          'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER') then
+        raise exception 'WALKIN FAIL: authorization table grants client privileges to %', v_caller;
+      end if;
+    end loop;
+    if not (select relrowsecurity from pg_class where oid = 'public.walk_in_authorizations'::regclass) then
+      raise exception 'WALKIN FAIL: authorization table lacks RLS';
+    end if;
+
+    -- An attendant can still record and price a car at a fully closed lot.
+    perform set_config('request.jwt.claims',
+      '{"sub":"00000000-0000-0000-0000-0000000000a3","role":"authenticated"}', true);
+    perform set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-0000000000a3', true);
+    set local role authenticated;
+    select reservation_id into v_walk_in from public.check_in_walk_in(
+      v_space, v_customer, null, '2028-02-15 18:00:00+00', '2028-02-15 19:00:00+00');
+    begin
+      perform public.check_in_walk_in(v_space, v_customer, null,
+        '2028-02-15 18:00:00+00', '2028-02-15 19:00:00+00');
+      raise exception 'WALKIN FAIL: overlapping walk-in was accepted';
+    exception when sqlstate 'P0001' then
+      if sqlerrm <> 'SPACE_UNAVAILABLE' then raise; end if;
+    end;
+    begin
+      perform public.create_reservation(v_space, v_customer, null,
+        '2028-02-15 20:00:00+00', '2028-02-15 21:00:00+00');
+      raise exception 'WALKIN FAIL: successful or failed walk-in left an exemption armed';
+    exception when sqlstate 'P0001' then
+      if sqlerrm <> 'OUTSIDE_OPERATING_HOURS' then raise; end if;
+    end;
+
+    execute format('set local role %I', v_original_role);
+    if (select count(*) from public.reservations r
+        join public.space_holds h on h.reservation_id = r.id
+        where r.id = v_walk_in and r.status = 'active' and r.total_cents = 500
+          and r.checked_in_by = '00000000-0000-0000-0000-0000000000a3'
+          and r.checked_in_at is not null and h.released_at is null) <> 1
+       or (select count(*) from public.audit_log where target_id = v_walk_in and action = 'check_in_walk_in') <> 1
+       or (select count(*) from public.walk_in_authorizations) <> 0 then
+      raise exception 'WALKIN FAIL: exemption lost pricing/check-in/hold/audit or leaked authorization';
+    end if;
+    perform set_config('request.jwt.claims',
+      '{"sub":"00000000-0000-0000-0000-0000000000b1","role":"authenticated"}', true);
+    perform set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-0000000000b1', true);
+    set local role authenticated;
+    begin
+      perform public.check_in_walk_in(v_space, v_customer, null,
+        '2028-02-15 20:00:00+00', '2028-02-15 21:00:00+00');
+      raise exception 'WALKIN FAIL: foreign admin checked in a walk-in';
+    exception when sqlstate 'P0001' then
+      if sqlerrm <> 'ROLE_NOT_ALLOWED' then raise; end if;
+    end;
+    execute format('set local role %I', v_original_role);
+    raise notice 'WALKIN PASS: forged GUC refused; closed-hours attendant walk-in priced/audited; no leaked token; foreign admin refused';
     if public.safe_timezone('America/Los_Angeles') is distinct from 'America/Los_Angeles' then
       raise exception 'TIME FAIL: canonical report timezone changed';
     end if;

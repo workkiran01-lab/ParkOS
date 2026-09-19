@@ -9,6 +9,39 @@ const url = assertLoopbackDatabaseUrl(process.env.PARKOS_TEST_DATABASE_URL)
 const invoiceVerifier =
   'supabase/dev-only/20260903000000_verify_invoice_paid.sql'
 const cases = [
+  {
+    name: 'Walk-in rejects forged GUC authorization',
+    function: 'enforce_reservation_operating_hours',
+    pattern: /\nbegin\n/,
+    replacement: `\nbegin\n  if current_setting('parkos.walk_in_checkin', true) = 'on' then return new; end if;\n`,
+    verifier: 'supabase/dev-only/20260907020000_verify_facility_time.sql',
+    witness: 'WALKIN FAIL: forged GUC bypassed scheduled operating hours',
+  },
+  {
+    name: 'Walk-in retains closed-hours exemption',
+    function: 'enforce_reservation_operating_hours',
+    pattern: /if found then return new; end if;/,
+    replacement: 'if found then null; end if;',
+    verifier: 'supabase/dev-only/20260907020000_verify_facility_time.sql',
+    witness: 'OUTSIDE_OPERATING_HOURS',
+  },
+  {
+    name: 'Walk-in rejects client authorization-table grants',
+    scriptPattern: 'begin;',
+    scriptReplacement:
+      'begin;\ngrant insert on public.walk_in_authorizations to authenticated;',
+    verifier: 'supabase/dev-only/20260907020000_verify_facility_time.sql',
+    witness: 'WALKIN FAIL: authorization table grants client privileges',
+  },
+  {
+    name: 'Walk-in rejects foreign tenant authorization',
+    function: 'check_in_walk_in',
+    pattern:
+      /if not public\.has_any_role\(v_org_id, array\['admin','manager','attendant'\]\) then/,
+    replacement: 'if false then',
+    verifier: 'supabase/dev-only/20260907020000_verify_facility_time.sql',
+    witness: 'WALKIN FAIL: foreign admin checked in a walk-in',
+  },
   ...[false, true].map((changeOwner) => ({
     name: `Privileged catalog catches throwaway definer${changeOwner ? ' under another owner' : ''}`,
     scriptPattern: 'begin;',

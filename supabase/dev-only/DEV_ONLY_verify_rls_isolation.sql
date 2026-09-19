@@ -10,7 +10,7 @@
 begin;
 
 -- ---------------------------------------------------------------------------
--- CHECK 0: the DDL actually landed — 21 RLS-enabled tables, 61 policies,
+-- CHECK 0: the DDL actually landed — 22 RLS-enabled tables, 61 policies,
 -- all authorization/bootstrap/lifecycle functions present and SECURITY DEFINER.
 -- ---------------------------------------------------------------------------
 do $$
@@ -24,9 +24,9 @@ begin
                        'permits','price_rules','space_holds','invites','audit_log',
                        'payments','processed_stripe_events','vehicle_photos',
                        'booth_payments','receipts','account_status',
-                       'permit_payments');
-  if v <> 21 then
-    raise exception 'CHECK0 FAIL: expected 21 RLS-enabled tables, found %', v;
+                       'permit_payments','walk_in_authorizations');
+  if v <> 22 then
+    raise exception 'CHECK0 FAIL: expected 22 RLS-enabled tables, found %', v;
   end if;
 
   -- 36 through Week 4, +1 in Week 5 (space_holds_update for release-early),
@@ -101,7 +101,7 @@ begin
   if v <> 1 then
     raise exception 'CHECK0 FAIL: is_own_customer missing or wrongly SECURITY DEFINER';
   end if;
-  raise notice 'CHECK0 PASS: 21 RLS tables, 61 policies, % SECURITY DEFINER functions all pinning search_path', v_definers;
+  raise notice 'CHECK0 PASS: 22 RLS tables, 61 policies, % SECURITY DEFINER functions all pinning search_path', v_definers;
 end $$;
 
 -- ---------------------------------------------------------------------------
@@ -1406,7 +1406,7 @@ rollback;
 -- completes, return an explicit, machine-visible summary for CI/manual evidence.
 select check_name, result
 from (values
-  ('CHECK0',  'PASS: 21 RLS tables, 61 policies, all definers pin search_path'),
+  ('CHECK0',  'PASS: 22 RLS tables, 61 policies, all definers pin search_path'),
   ('CHECK0b', 'PASS: authenticated has normal DML grants; permits is SELECT-only'),
   ('CHECK0c', 'PASS: payment writes and Stripe event processing are service-role-only'),
   ('CHECK1',  'PASS: Org A sees exactly 2 facilities / 165 spaces, all Org A'),
