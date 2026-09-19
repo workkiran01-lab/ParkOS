@@ -88,13 +88,15 @@ values
    tstzrange('2026-03-08 08:00:00+00', '2026-03-08 09:30:00+00', '[)'),
    'active', 'PKS-TEST25', '{"currency":"USD","line_items":[],"total_cents":0}', 0),
 
-  -- E004 an ordinary $50 session, checked in, used for the money checks.
+  -- E004 a $50 session, Aug 25 08:00-16:00 PDT. CHECK9 departs at
+  -- 19:00 PDT on the SAME local day: three hours share one 1200c cap.
+  -- Relative now() fixtures crossed midnight in CI and charged two caps.
   ('ff000000-0000-0000-0000-00000000e004',
    'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
    'ff000000-0000-0000-0000-0000000000f1',
    'ff000000-0000-0000-0000-0000000000f3',
    'ff000000-0000-0000-0000-0000000000f5',
-   tstzrange(now() - interval '2 hours', now() + interval '6 hours', '[)'),
+   tstzrange('2026-08-25 15:00:00+00', '2026-08-25 23:00:00+00', '[)'),
    'active', 'PKS-TEST26', '{"currency":"USD","line_items":[],"total_cents":5000}', 5000),
 
   -- E005 archived, and E006 cancelled: the two lookup states that must not
@@ -118,7 +120,7 @@ values
 update public.reservations set archived_at = now()
  where id = 'ff000000-0000-0000-0000-00000000e005';
 
-update public.reservations set checked_in_at = now() - interval '2 hours'
+update public.reservations set checked_in_at = '2026-08-25 15:00:00+00'
  where id = 'ff000000-0000-0000-0000-00000000e004';
 
 -- Act as the Org A admin from here: every function under test is staff-gated.
@@ -415,7 +417,7 @@ begin
     into v_final, v_overstay, v_collected, v_balance
     from public.check_out_reservation(
       'ff000000-0000-0000-0000-00000000e004',
-      now() + interval '9 hours',
+      '2026-08-26 02:00:00+00',
       'card');
 
   if v_overstay <> 1200 then

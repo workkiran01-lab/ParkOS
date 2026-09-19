@@ -9,6 +9,16 @@ const url = assertLoopbackDatabaseUrl(process.env.PARKOS_TEST_DATABASE_URL)
 const invoiceVerifier =
   'supabase/dev-only/20260903000000_verify_invoice_paid.sql'
 const cases = [
+  {
+    name: 'Checkout rejects removed overstay pricing',
+    function: 'calculate_overstay',
+    pattern: /\nbegin\n/,
+    replacement: `\nbegin\n  if p_reservation_id = 'ff000000-0000-0000-0000-00000000e004' then
+    return query select 0, '{}'::jsonb; return;
+  end if;\n`,
+    verifier: 'supabase/dev-only/20260825010000_verify_booth_payments.sql',
+    witness: 'CHECK9 FAIL: overstay = 0c',
+  },
   ...['parkos-permit-reconciliation', 'parkos-no-show-sweep'].map((job) => ({
     name: `Cron rejects a no-op command: ${job}`,
     scriptPattern: 'begin;',
