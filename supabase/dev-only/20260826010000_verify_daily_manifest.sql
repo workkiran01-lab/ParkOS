@@ -1,4 +1,4 @@
--- DEV-ONLY verification for public.facility_daily_manifest(uuid, date).
+﻿-- DEV-ONLY verification for public.facility_daily_manifest(uuid, date).
 -- Runs inside a transaction that ends in ROLLBACK. It exercises the seeded
 -- disposable database and temporarily archives one fixture row.
 --
@@ -13,6 +13,49 @@
 -- result set, because `supabase db query` surfaces one.
 
 begin;
+
+-- Freeze only the clock read in the DEPLOYED function, transactionally. Its
+-- timezone and coalesce expression remain untouched and are what CHECK 9 tests.
+-- PostgreSQL has no transaction-clock setter; no production test GUC or RPC is
+-- introduced. ROLLBACK restores the original function as well as the fixtures.
+do $$
+declare v_definition text;
+begin
+  v_definition := pg_get_functiondef('public.facility_daily_manifest(uuid,date)'::regprocedure);
+  if (length(v_definition) - length(replace(v_definition, 'now()', ''))) / 5 <> 1 then
+    raise exception 'Manifest clock fixture requires exactly one now() read';
+  end if;
+  execute replace(v_definition, 'now()', 'timestamptz ''2026-08-24 06:30:00+00''');
+end $$;
+
+-- At the frozen instant LA is August 23, 23:30. One booking turns around that
+-- night; another turns around after local midnight. These are literal dates,
+-- not dates computed using the function's default expression.
+insert into public.facilities (id, org_id, name, timezone)
+values ('ed000000-0000-0000-0000-0000000000f1', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+        'Midnight Lot', 'America/Los_Angeles');
+insert into public.zones (id, org_id, facility_id, name)
+values ('ed000000-0000-0000-0000-0000000000f2', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+        'ed000000-0000-0000-0000-0000000000f1', 'Midnight Zone');
+insert into public.spaces (id, org_id, zone_id, space_number)
+values ('ed000000-0000-0000-0000-0000000000f3', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+        'ed000000-0000-0000-0000-0000000000f2', 'MID-1');
+insert into public.customers (id, org_id, full_name)
+values ('ed000000-0000-0000-0000-0000000000f4', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'Midnight Driver');
+insert into public.reservations
+  (id, org_id, facility_id, space_id, customer_id, during, status, booking_code,
+   price_breakdown, total_cents, currency)
+values
+  ('ed000000-0000-0000-0000-0000000000f5', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+   'ed000000-0000-0000-0000-0000000000f1', 'ed000000-0000-0000-0000-0000000000f3',
+   'ed000000-0000-0000-0000-0000000000f4',
+   '[2026-08-24 06:30:00+00,2026-08-24 06:45:00+00)', 'confirmed', 'PKS-MDAAAA',
+   '{"currency":"USD","line_items":[],"total_cents":900}', 900, 'USD'),
+  ('ed000000-0000-0000-0000-0000000000f6', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+   'ed000000-0000-0000-0000-0000000000f1', 'ed000000-0000-0000-0000-0000000000f3',
+   'ed000000-0000-0000-0000-0000000000f4',
+   '[2026-08-24 07:15:00+00,2026-08-24 07:45:00+00)', 'confirmed', 'PKS-MDAAAB',
+   '{"currency":"USD","line_items":[],"total_cents":1100}', 1100, 'USD');
 
 -- Fixed fixtures exercise all three manifest kinds. The cross-midnight row is
 -- arriving on August 23 and departing on August 24; the first row is a
@@ -160,6 +203,20 @@ expected as (
      and r.archived_at is null
    where (lower(r.during) at time zone f.tz)::date = dt.local_date
       or (upper(r.during) at time zone f.tz)::date = dt.local_date
+),
+default_manifest as (
+  select * from public.facility_daily_manifest('ed000000-0000-0000-0000-0000000000f1')
+),
+expected_default as (
+  select 'ed000000-0000-0000-0000-0000000000f5'::uuid as reservation_id,
+         'PKS-MDAAAA'::text, 'Midnight Driver'::text, 'MID-1'::text, 'Midnight Zone'::text,
+         '2026-08-24 06:30:00+00'::timestamptz, '2026-08-24 06:45:00+00'::timestamptz,
+         'confirmed'::public.reservation_status, 'turnaround'::text,
+         900, 0, 900, 'USD'::text, null::timestamptz, null::timestamptz
+),
+utc_date_manifest as (
+  select * from public.facility_daily_manifest(
+    'ed000000-0000-0000-0000-0000000000f1', '2026-08-24')
 )
 
 -- CHECK 1 - balance parity against the canonical function, EVERY row.
@@ -308,18 +365,19 @@ select '8. cross-tenant facility returns zero rows',
 
 union all
 
--- CHECK 9 - default p_date resolves to the facility's local today.
-select '9. default p_date == explicit facility-local today',
-       case when (select count(*) from (
-                   select * from public.facility_daily_manifest(
-                     '11111111-1111-1111-1111-111111111111'::uuid)
-                   except all
-                   select * from public.facility_daily_manifest(
-                     '11111111-1111-1111-1111-111111111111'::uuid,
-                     (now() at time zone (select tz from sol_facilities
-                                           where id = '11111111-1111-1111-1111-111111111111'))::date)
-                 ) z) = 0 then 'PASS' else 'FAIL' end,
-       'Lot A, default vs explicit local today'
+-- CHECK 9 - independently fixed local-midnight witness, full rows, both ways.
+select '9. default p_date uses local today across UTC midnight',
+       case when not exists (
+                   select * from default_manifest except all select * from expected_default)
+             and not exists (
+                   select * from expected_default except all select * from default_manifest)
+             and (select count(*) from utc_date_manifest) = 1
+             and (select reservation_id from utc_date_manifest limit 1)
+                 = 'ed000000-0000-0000-0000-0000000000f6'::uuid
+             and not exists (select 1 from utc_date_manifest
+                              where reservation_id = 'ed000000-0000-0000-0000-0000000000f5')
+              then 'PASS' else 'FAIL' end,
+       'Frozen 2026-08-24 06:30Z = Aug 23 23:30 LA; default exactly f5, UTC-date exactly f6'
 
 order by 1;
 

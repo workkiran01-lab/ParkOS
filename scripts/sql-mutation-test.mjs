@@ -10,6 +10,30 @@ const invoiceVerifier =
   'supabase/dev-only/20260903000000_verify_invoice_paid.sql'
 const cases = [
   {
+    name: 'Manifest defaults to UTC today',
+    function: 'facility_daily_manifest',
+    pattern: /now\(\) at time zone public\.safe_timezone\(f\.timezone\)/,
+    replacement: "now() at time zone 'UTC'",
+    verifier: 'supabase/dev-only/20260826010000_verify_daily_manifest.sql',
+    witness: '9. default p_date uses local today across UTC midnight: FAIL',
+  },
+  {
+    name: 'Default manifest silently returns no rows',
+    function: 'facility_daily_manifest',
+    pattern: /where f\.id = p_facility_id/,
+    replacement: 'where f.id = p_facility_id and p_date is not null',
+    verifier: 'supabase/dev-only/20260826010000_verify_daily_manifest.sql',
+    witness: '9. default p_date uses local today across UTC midnight: FAIL',
+  },
+  {
+    name: 'Default manifest includes an extra day',
+    function: 'facility_daily_manifest',
+    pattern: /and \(\s*\(lower\(r\.during\)/,
+    replacement: 'and (p_date is null or (lower(r.during)',
+    verifier: 'supabase/dev-only/20260826010000_verify_daily_manifest.sql',
+    witness: '9. default p_date uses local today across UTC midnight: FAIL',
+  },
+  {
     name: 'Subscription processor accepts a misrouted invoice',
     function: 'process_stripe_subscription_event',
     pattern:
