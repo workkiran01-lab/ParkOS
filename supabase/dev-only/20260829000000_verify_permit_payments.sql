@@ -177,11 +177,11 @@ select set_config('request.jwt.claims', '{"role":"service_role"}', true);
 
 
 -- ---------------------------------------------------------------------------
--- CHECK 4 -- input validation runs before anything is written. Each of these is
--- a payload we would rather reject loudly than book as revenue.
+-- CHECK 4 -- input validation runs before anything is written. Malformed
+-- payloads remain errors; an unrelated subscription is an explicit no-op.
 -- ---------------------------------------------------------------------------
 do $$
-declare v_msg text; v int;
+declare v_msg text; v int; v_result jsonb;
 begin
   begin
     perform public.record_permit_payment(
@@ -230,14 +230,11 @@ begin
     if v_msg <> 'INVALID_CURRENCY' then raise; end if;
   end;
 
-  begin
-    perform public.record_permit_payment(
-      'evt_x', null, 'sub_no_such_subscription', 'in_x', 15000, 'usd', null, true);
-    raise exception 'CHECK4 FAIL: an unknown subscription resolved to a permit';
-  exception when others then
-    get stacked diagnostics v_msg = message_text;
-    if v_msg <> 'PERMIT_NOT_FOUND' then raise; end if;
-  end;
+  v_result := public.record_permit_payment(
+    'evt_x', null, 'sub_no_such_subscription', 'in_x', 15000, 'usd', null, true);
+  if v_result is distinct from '{"processed":false,"outcome":"permit_not_found"}'::jsonb then
+    raise exception 'CHECK4 FAIL: an unrelated subscription returned %', v_result;
+  end if;
 
   begin
     perform public.record_permit_payment(

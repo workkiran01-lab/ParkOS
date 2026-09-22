@@ -37,6 +37,12 @@
 --            still a raise. And no unresolved event may claim an event id --
 --            the only claims allowed are the three events that DID resolve in
 --            checks 1 and 2.
+--   CHECK 6  all six permit event routes acknowledge subscription-only misses
+--            without any table changing, including on repeated delivery.
+--   CHECK 7  absent/blank identifiers, explicit missing permit ids, mismatches
+--            and untrusted callers remain errors in both permit processors.
+--   CHECK 8  previously ignored ids can be replayed after subscription binding:
+--            one 15000c payment, one audit and one activation; then deduplication.
 --
 -- Depends on the dev seed (DEV_ONLY_seed_dev_orgs.sql) for Org A:
 --   Org A (Harbor Park Group) = aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa
@@ -372,6 +378,173 @@ begin
   raise notice 'CHECK5 PASS: all 6 routed types survive a miss; only the 3 resolved events claimed ids';
 end $$;
 
+
+-- The permit processors acknowledge subscription-only misses too. Snapshot the
+-- full affected tables, not only their counts: an UPDATE must not pass as a no-op.
+create temporary view permit_event_state as
+select jsonb_build_object(
+  'permits', (select jsonb_agg(to_jsonb(p) order by p.id) from public.permits p),
+  'permit_payments', (select jsonb_agg(to_jsonb(p) order by p.id) from public.permit_payments p),
+  'payments', (select jsonb_agg(to_jsonb(p) order by p.id) from public.payments p),
+  'reservations', (select jsonb_agg(to_jsonb(r) order by r.id) from public.reservations r),
+  'holds', (select jsonb_agg(to_jsonb(h) order by h.id) from public.space_holds h),
+  'events', (select jsonb_agg(to_jsonb(e) order by e.event_id) from public.processed_stripe_events e),
+  'audit', (select jsonb_agg(to_jsonb(a) order by a.id) from public.audit_log a)
+) as state;
+
+-- CHECK 6: all six permit routes and repeated deliveries return an explicit
+-- no-op. None may claim the event id or change any money, lifecycle or audit row.
+do $$
+declare
+  v_type text; v_result jsonb; v_before jsonb; v_attempt integer;
+begin
+  select state into strict v_before from permit_event_state;
+  foreach v_type in array array[
+    'invoice.paid', 'invoice.payment_succeeded',
+    'customer.subscription.created', 'customer.subscription.updated',
+    'customer.subscription.deleted', 'invoice.payment_failed'
+  ] loop
+    for v_attempt in 1..2 loop
+      begin
+        if v_type in ('invoice.paid', 'invoice.payment_succeeded') then
+          v_result := public.record_permit_payment(
+            'evt_unrelated_permit_' || v_type, null, 'sub_unrelated_permit',
+            'in_unrelated_permit', 15000, 'usd', 'pi_unrelated_permit', true);
+        else
+          v_result := public.process_stripe_subscription_event(
+            'evt_unrelated_permit_' || v_type, v_type, null,
+            'sub_unrelated_permit', 'active',
+            '2026-09-01T00:00Z', '2026-10-01T00:00Z', null);
+        end if;
+      exception when others then
+        raise exception 'UNRELATED PERMIT FAIL: % still raises %', v_type, sqlerrm;
+      end;
+      if v_result is distinct from '{"processed":false,"outcome":"permit_not_found"}'::jsonb then
+        raise exception 'UNRELATED PERMIT FAIL: % returned %', v_type, v_result;
+      end if;
+      if (select state from permit_event_state) is distinct from v_before then
+        raise exception 'UNRELATED PERMIT FAIL: % wrote database state', v_type;
+      end if;
+    end loop;
+  end loop;
+  raise notice 'CHECK6 PASS: six unrelated permit routes, twice each, no state changes';
+end $$;
+
+-- CHECK 7: missing/blank identifiers are malformed, while an explicit ParkOS
+-- permit id that cannot be resolved is still a retryable processing failure.
+-- Mismatched ids and an untrusted role must also retain their original errors.
+do $$
+declare
+  v_processor text; v_case record; v_before jsonb; v_message text; v_code text;
+begin
+  select state into strict v_before from permit_event_state;
+  foreach v_processor in array array['record_permit_payment', 'process_stripe_subscription_event'] loop
+    for v_case in
+      select * from (values
+        (null::uuid, null::text, 'service_role', '22023', 'PERMIT_IDENTIFIER_REQUIRED'),
+        (null::uuid, '', 'service_role', '22023', 'PERMIT_IDENTIFIER_REQUIRED'),
+        (null::uuid, '   ', 'service_role', '22023', 'PERMIT_IDENTIFIER_REQUIRED'),
+        ('fd000000-0000-0000-0000-000000000099'::uuid, null, 'service_role', 'P0002', 'PERMIT_NOT_FOUND'),
+        ('fd000000-0000-0000-0000-000000000099'::uuid, 'sub_devtest_unres_0001', 'service_role', 'P0002', 'PERMIT_NOT_FOUND'),
+        ('fd000000-0000-0000-0000-0000000000b1'::uuid, 'sub_wrong', 'service_role', 'P0001', 'PERMIT_IDENTIFIER_MISMATCH'),
+        (null::uuid, 'sub_unrelated_permit', 'authenticated', 'P0001', 'SERVICE_ROLE_REQUIRED')
+      ) as cases(permit_id, subscription_id, claim_role, expected_code, expected_message)
+    loop
+      perform set_config('request.jwt.claims', jsonb_build_object('role', v_case.claim_role)::text, true);
+      begin
+        if v_processor = 'record_permit_payment' then
+          perform public.record_permit_payment(
+            'evt_unrelated_permit_invalid', v_case.permit_id, v_case.subscription_id,
+            'in_unrelated_permit_invalid', 15000, 'usd', null, true);
+        else
+          perform public.process_stripe_subscription_event(
+            'evt_unrelated_permit_invalid', 'customer.subscription.updated',
+            v_case.permit_id, v_case.subscription_id, 'active');
+        end if;
+        raise exception 'unexpected success';
+      exception when others then
+        get stacked diagnostics v_message = message_text, v_code = returned_sqlstate;
+        if v_code is distinct from v_case.expected_code
+           or v_message is distinct from v_case.expected_message then
+          raise exception 'PERMIT ERROR FAIL: % expected %/%, got %/%',
+            v_processor, v_case.expected_code, v_case.expected_message, v_code, v_message;
+        end if;
+      end;
+      if (select state from permit_event_state) is distinct from v_before then
+        raise exception 'PERMIT ERROR FAIL: % changed database state', v_processor;
+      end if;
+    end loop;
+  end loop;
+  perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
+  raise notice 'CHECK7 PASS: both processors retain identifier and authorization errors';
+end $$;
+
+-- CHECK 8: no-op delivery did not consume either event id. Once the subscription
+-- can be resolved, replay the SAME ids and require actual ledger/lifecycle writes.
+-- A further delivery must be deduplicated, without changing rows or audit history.
+do $$
+declare
+  v_result jsonb; v_after jsonb; v_payments bigint; v_audits bigint; v_events bigint;
+begin
+  select count(*) into v_payments from public.permit_payments;
+  select count(*) into v_audits from public.audit_log;
+  select count(*) into v_events from public.processed_stripe_events;
+  update public.permits
+     set stripe_subscription_id = 'sub_unrelated_permit', status = 'suspended'
+   where id = 'fd000000-0000-0000-0000-0000000000b1';
+
+  v_result := public.record_permit_payment(
+    'evt_unrelated_permit_invoice.paid', null, 'sub_unrelated_permit',
+    'in_unrelated_permit', 15000, 'usd', 'pi_unrelated_permit', true);
+  if (v_result ->> 'processed')::boolean is not true
+     or v_result ->> 'outcome' is distinct from 'permit_payment_recorded'
+     or v_result ->> 'permit_id' is distinct from 'fd000000-0000-0000-0000-0000000000b1'
+     or not exists (
+       select 1 from public.permit_payments
+        where id = (v_result ->> 'payment_id')::uuid
+          and permit_id = 'fd000000-0000-0000-0000-0000000000b1'
+          and stripe_invoice_id = 'in_unrelated_permit'
+          and stripe_payment_intent_id = 'pi_unrelated_permit'
+          and amount_cents = 15000 and currency = 'USD' and status = 'succeeded'
+     ) then
+    raise exception 'PERMIT REPLAY FAIL: resolved invoice did not record 15000 cents: %', v_result;
+  end if;
+
+  v_result := public.process_stripe_subscription_event(
+    'evt_unrelated_permit_customer.subscription.updated', 'customer.subscription.updated',
+    null, 'sub_unrelated_permit', 'active', '2026-09-01T00:00Z', '2026-10-01T00:00Z');
+  if (v_result ->> 'processed')::boolean is not true
+     or v_result ->> 'outcome' is distinct from 'permit_active'
+     or not exists (
+       select 1 from public.permits
+        where id = 'fd000000-0000-0000-0000-0000000000b1'
+          and status = 'active' and current_period_start = '2026-09-01T00:00Z'
+          and current_period_end = '2026-10-01T00:00Z'
+     ) then
+    raise exception 'PERMIT REPLAY FAIL: resolved subscription did not activate: %', v_result;
+  end if;
+  if (select count(*) from public.permit_payments) <> v_payments + 1
+     or (select count(*) from public.audit_log) <> v_audits + 1
+     or (select count(*) from public.processed_stripe_events) <> v_events + 2 then
+    raise exception 'PERMIT REPLAY FAIL: expected one payment, one audit and two event claims';
+  end if;
+  select state into strict v_after from permit_event_state;
+
+  v_result := public.record_permit_payment(
+    'evt_unrelated_permit_invoice.paid', null, 'sub_unrelated_permit',
+    'in_unrelated_permit', 15000, 'usd', 'pi_unrelated_permit', true);
+  if v_result is distinct from '{"processed":false,"outcome":"duplicate_event"}'::jsonb then
+    raise exception 'PERMIT REPLAY FAIL: invoice redelivery returned %', v_result;
+  end if;
+  v_result := public.process_stripe_subscription_event(
+    'evt_unrelated_permit_customer.subscription.updated', 'customer.subscription.updated',
+    null, 'sub_unrelated_permit', 'past_due', '2026-09-01T00:00Z', '2026-10-01T00:00Z');
+  if v_result is distinct from '{"processed":false,"outcome":"duplicate_event"}'::jsonb
+     or (select state from permit_event_state) is distinct from v_after then
+    raise exception 'PERMIT REPLAY FAIL: redelivery changed database state: %', v_result;
+  end if;
+  raise notice 'CHECK8 PASS: both ignored ids replay successfully once; redelivery is a no-op';
+end $$;
 
 select
   p.id,

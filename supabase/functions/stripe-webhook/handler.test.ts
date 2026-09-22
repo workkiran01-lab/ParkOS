@@ -201,6 +201,70 @@ test('unknown events and unrelated invoices are ignored without database calls',
   }
 })
 
+test('unrelated subscriptions are acknowledged without receipts across all permit routes', async () => {
+  for (const type of [
+    'invoice.paid',
+    'invoice.payment_succeeded',
+    'customer.subscription.created',
+    'customer.subscription.updated',
+    'customer.subscription.deleted',
+    'invoice.payment_failed',
+  ]) {
+    const isInvoice = type.startsWith('invoice.')
+    const payload = isInvoice
+      ? {
+          ...invoice,
+          parent: {
+            subscription_details: { subscription: 'sub_other', metadata: {} },
+          },
+        }
+      : { ...subscription, id: 'sub_other', metadata: {} }
+    const h = harness([{ processed: false, outcome: 'permit_not_found' }])
+    const response = await h.send(event(type, payload))
+    assert.equal(response.status, 200, type)
+    assert.deepEqual(await response.json(), {
+      received: true,
+      processed: false,
+    })
+    assert.equal(h.calls.length, 1)
+    assert.equal(
+      h.calls[0].name,
+      type === 'invoice.paid' || type === 'invoice.payment_succeeded'
+        ? 'record_permit_payment'
+        : 'process_stripe_subscription_event',
+    )
+    assert.equal(h.calls[0].args.p_permit_id, null)
+    assert.equal(h.calls[0].args.p_stripe_subscription_id, 'sub_other')
+    assert.deepEqual(h.receipts, [])
+  }
+})
+
+test('permit lookup and identifier errors remain retryable on both processors', async () => {
+  for (const type of ['invoice.paid', 'customer.subscription.updated']) {
+    for (const message of [
+      'PERMIT_NOT_FOUND',
+      'PERMIT_IDENTIFIER_REQUIRED',
+      'PERMIT_IDENTIFIER_MISMATCH',
+    ]) {
+      const handler = createStripeWebhookHandler({
+        verifyEvent: async () =>
+          event(type, type === 'invoice.paid' ? invoice : subscription),
+        rpc: async () => ({ data: null, error: { message } }),
+        issueReceipt: async () =>
+          assert.fail('Failed events cannot issue receipts'),
+      })
+      const response = await handler(
+        new Request('http://localhost', {
+          method: 'POST',
+          headers: { 'Stripe-Signature': 'local' },
+          body: '{}',
+        }),
+      )
+      assert.equal(response.status, 500, `${type}: ${message}`)
+    }
+  }
+})
+
 test('malformed supported payloads return 400 before any database call', async () => {
   const malformed = [
     null,

@@ -9,6 +9,61 @@ const url = assertLoopbackDatabaseUrl(process.env.PARKOS_TEST_DATABASE_URL)
 const invoiceVerifier =
   'supabase/dev-only/20260903000000_verify_invoice_paid.sql'
 const cases = [
+  ...['record_permit_payment', 'process_stripe_subscription_event'].flatMap(
+    (name) => {
+      const verifier =
+        'supabase/dev-only/20260905000000_verify_unresolved_payment.sql'
+      const missingResult =
+        /return jsonb_build_object\('processed', false, 'outcome', 'permit_not_found'\);/
+      return [
+        {
+          name: `Unrelated permit events: ${name} restores missing-permit crash`,
+          function: name,
+          pattern: missingResult,
+          replacement:
+            "raise exception using errcode = 'P0002', message = 'PERMIT_NOT_FOUND';",
+          verifier,
+          witness: 'UNRELATED PERMIT FAIL:',
+        },
+        {
+          name: `Unrelated permit events: ${name} returns null`,
+          function: name,
+          pattern: missingResult,
+          replacement: 'return null;',
+          verifier,
+          witness: 'UNRELATED PERMIT FAIL:',
+        },
+        {
+          name: `Unrelated permit events: ${name} changes an existing permit`,
+          function: name,
+          pattern: missingResult,
+          replacement:
+            "update public.permits set status = 'suspended'; " +
+            "return jsonb_build_object('processed', false, 'outcome', 'permit_not_found');",
+          verifier,
+          witness: 'wrote database state',
+        },
+        {
+          name: `Unrelated permit events: ${name} swallows an explicit missing permit`,
+          function: name,
+          pattern:
+            /    if p_permit_id is not null then\n      raise exception using errcode = 'P0002', message = 'PERMIT_NOT_FOUND';\n    end if;/,
+          replacement: '',
+          verifier,
+          witness: 'PERMIT ERROR FAIL:',
+        },
+        {
+          name: `Unrelated permit events: ${name} accepts a blank identifier`,
+          function: name,
+          pattern:
+            /elsif nullif\(trim\(p_stripe_subscription_id\), ''\) is not null then/,
+          replacement: 'elsif p_stripe_subscription_id is not null then',
+          verifier,
+          witness: 'PERMIT ERROR FAIL:',
+        },
+      ]
+    },
+  ),
   {
     name: 'Booth settlement rejects missing collection balance',
     function: 'record_booth_payment',
