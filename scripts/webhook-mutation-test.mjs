@@ -12,6 +12,13 @@ const tests = [
 ]
 const mutations = [
   [
+    'Unrelated failed invoice retried as malformed',
+    handler,
+    'if (!permitId && !subscriptionId) return ignored()',
+    'if (!permitId && !subscriptionId) return malformed()',
+    'unknown events and unrelated invoices',
+  ],
+  [
     'Basil paid property regression',
     'supabase/functions/_shared/stripe-payload.ts',
     "return invoice.paid === true || invoice.status === 'paid'",

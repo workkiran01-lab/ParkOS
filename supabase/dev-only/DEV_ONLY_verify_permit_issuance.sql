@@ -13,11 +13,13 @@
 -- an unavailable space.
 --
 --   IP1  issued permit is 'pending', holds the space, has no subscription
---   IP2  Stripe fails      -> abandon releases the hold and closes the permit
---   IP3  browser closed    -> permit stays 'pending', never drifts to active
---   IP4  two operators     -> second gets SPACE_UNAVAILABLE, creates nothing
+--   IP2  explicit abandon  -> releases the hold and closes the permit
+--   IP3  immediate reread  -> pending state and hold are unchanged
+--   IP4  sequential issue  -> second gets SPACE_UNAVAILABLE, creates nothing
 --   IP5  abandon twice     -> idempotent; and REFUSES once a subscription exists
 --   IP6  webhook promotes pending -> suspended/active, and keeps the hold
+
+begin;
 
 do $$
 declare
@@ -68,7 +70,7 @@ begin
     execute format('set local role %I', v_role);
     select status, stripe_subscription_id into v_status, v_sub
       from public.permits where id = v_permit;
-    if v_status <> 'pending' then
+    if v_status is distinct from 'pending' then
       raise exception 'IP1 FAIL: new permit is % not pending', v_status; end if;
     if v_sub is not null then
       raise exception 'IP1 FAIL: new permit already has a subscription'; end if;
@@ -78,8 +80,8 @@ begin
       raise exception 'IP1 FAIL: expected 1 open hold, found %', v_holds; end if;
 
     -- -------------------------------------------------------------------
-    -- IP4: a second operator issuing the SAME space loses the exclusion
-    -- constraint. This is why Stripe is not called first.
+    -- IP4: a second sequential issue on the SAME space loses the exclusion
+    -- constraint. This does not exercise concurrent database sessions.
     -- -------------------------------------------------------------------
     perform set_config('request.jwt.claims',
       format('{"sub":"%s","role":"authenticated"}', a_admin), true);
@@ -100,11 +102,11 @@ begin
       raise exception 'IP4 FAIL: loser left a hold behind (% open)', v_holds; end if;
 
     -- -------------------------------------------------------------------
-    -- IP3: browser closed mid-flow. Nothing runs. The permit must simply
-    -- stay pending -- never drift to active, never release its own hold.
+    -- IP3: immediate state reread, with no intervening lifecycle operation.
+    -- This does not close a browser, advance time, or exercise a worker.
     -- -------------------------------------------------------------------
     select status into v_status from public.permits where id = v_permit;
-    if v_status <> 'pending' then
+    if v_status is distinct from 'pending' then
       raise exception 'IP3 FAIL: pending permit drifted to %', v_status; end if;
     select count(*) into v_holds from public.space_holds
      where permit_id = v_permit and released_at is null;
@@ -112,14 +114,14 @@ begin
       raise exception 'IP3 FAIL: hold released with no compensation'; end if;
 
     -- -------------------------------------------------------------------
-    -- IP2: Stripe failed, so the UI compensates. Hold released, permit closed.
+    -- IP2: invoke compensation directly. No Stripe request is executed here.
     -- -------------------------------------------------------------------
     select count(*) into v_audit_before from public.audit_log where target_id = v_permit;
     perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
     perform public.abandon_pending_permit(v_permit, 'IP2 stripe failed');
 
     select status into v_status from public.permits where id = v_permit;
-    if v_status <> 'cancelled' then
+    if v_status is distinct from 'cancelled' then
       raise exception 'IP2 FAIL: abandoned permit is % not cancelled', v_status; end if;
     select count(*) into v_holds from public.space_holds
      where permit_id = v_permit and released_at is null;
@@ -162,7 +164,7 @@ begin
 
     select status, stripe_subscription_id into v_status, v_sub
       from public.permits where id = v_permit2;
-    if v_status <> 'suspended' then
+    if v_status is distinct from 'suspended' then
       raise exception 'IP6 FAIL: promoted permit is % not suspended', v_status; end if;
     if v_sub is null then
       raise exception 'IP6 FAIL: webhook did not write stripe_subscription_id'; end if;
@@ -183,7 +185,7 @@ begin
         raise exception 'IP5b FAIL: wrong refusal "%"', sqlerrm; end if;
     end;
     select status into v_status from public.permits where id = v_permit2;
-    if v_status <> 'suspended' then
+    if v_status is distinct from 'suspended' then
       raise exception 'IP5b FAIL: refused call still changed status to %', v_status; end if;
     select count(*) into v_holds from public.space_holds
      where permit_id = v_permit2 and released_at is null;
@@ -203,9 +205,11 @@ end $$;
 select check_name, result
 from (values
   ('IP1', 'PASS: issued permit is pending, holds its space, has no subscription'),
-  ('IP2', 'PASS: Stripe failure abandons the permit, releases the hold, space reissuable'),
-  ('IP3', 'PASS: closed browser leaves pending untouched, no drift to active'),
-  ('IP4', 'PASS: concurrent issue on the same space rejected SPACE_UNAVAILABLE, no residue'),
+  ('IP2', 'PASS: explicit abandon cancels the permit, releases the hold, space reissuable'),
+  ('IP3', 'PASS: immediate reread retains pending state and its hold'),
+  ('IP4', 'PASS: second sequential issue rejected SPACE_UNAVAILABLE, no extra hold'),
   ('IP5', 'PASS: abandon is idempotent and REFUSES once stripe_subscription_id exists'),
   ('IP6', 'PASS: webhook promotes pending to suspended, writes the id, keeps the hold')
 ) as t(check_name, result);
+
+rollback;
