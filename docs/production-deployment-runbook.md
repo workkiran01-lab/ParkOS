@@ -49,7 +49,7 @@ supabase functions deploy refund-payment --project-ref <verified-production-ref>
 supabase functions deploy receipt-download --project-ref <verified-production-ref>
 ```
 
-The webhook must disable Supabase's JWT check because Stripe supplies its signature rather than a Supabase user token. Keep signature verification in the handler. Keep the other endpoints' caller authentication. The current repository has no `[functions.stripe-webhook]` override, so the deploy flag matters. See [Supabase function configuration](https://supabase.com/docs/guides/functions/function-configuration) and the [official Stripe webhook deployment example](https://github.com/supabase/supabase/blob/master/examples/edge-functions/supabase/functions/stripe-webhooks/README.md).
+The webhook must disable Supabase's JWT check because Stripe supplies its signature rather than a Supabase user token. Keep signature verification in the handler. Keep the other endpoints' caller authentication. The repository already sets `[functions.stripe-webhook] verify_jwt = false`; the explicit deploy flag above reinforces that setting. The effective deployed setting is what matters: omitting the flag does not itself cause rejection when this configuration is honored. See [Supabase function configuration](https://supabase.com/docs/guides/functions/function-configuration) and the [official Stripe webhook deployment example](https://github.com/supabase/supabase/blob/master/examples/edge-functions/supabase/functions/stripe-webhooks/README.md).
 
 Use the exact production webhook URL and live-mode endpoint secret. Configure these handled event types:
 
