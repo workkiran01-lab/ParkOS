@@ -154,6 +154,9 @@ export function createStripeWebhookHandler(deps: Dependencies) {
           const invoice = normalizeInvoice(payload)
           permitId = invoice.permitId
           subscriptionId = invoice.subscriptionId
+          // Account-wide invoice failures can belong to another application,
+          // just like paid invoices. No ParkOS identifier means no work here.
+          if (!permitId && !subscriptionId) return ignored()
         }
         if (!permitId && !subscriptionId) return malformed()
         return acknowledge(

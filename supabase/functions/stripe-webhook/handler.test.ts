@@ -192,6 +192,8 @@ test('unknown events and unrelated invoices are ignored without database calls',
   for (const value of [
     event('product.created', {}),
     event('invoice.paid', { id: 'in_other', status: 'paid' }),
+    event('invoice.payment_succeeded', { id: 'in_other', status: 'paid' }),
+    event('invoice.payment_failed', { id: 'in_other', status: 'open' }),
   ]) {
     const h = harness()
     const response = await h.send(value)
@@ -240,7 +242,12 @@ test('unrelated subscriptions are acknowledged without receipts across all permi
 })
 
 test('permit lookup and identifier errors remain retryable on both processors', async () => {
-  for (const type of ['invoice.paid', 'customer.subscription.updated']) {
+  for (const type of [
+    'invoice.paid',
+    'invoice.payment_succeeded',
+    'invoice.payment_failed',
+    'customer.subscription.updated',
+  ]) {
     for (const message of [
       'PERMIT_NOT_FOUND',
       'PERMIT_IDENTIFIER_REQUIRED',
@@ -248,7 +255,7 @@ test('permit lookup and identifier errors remain retryable on both processors', 
     ]) {
       const handler = createStripeWebhookHandler({
         verifyEvent: async () =>
-          event(type, type === 'invoice.paid' ? invoice : subscription),
+          event(type, type.startsWith('invoice.') ? invoice : subscription),
         rpc: async () => ({ data: null, error: { message } }),
         issueReceipt: async () =>
           assert.fail('Failed events cannot issue receipts'),
