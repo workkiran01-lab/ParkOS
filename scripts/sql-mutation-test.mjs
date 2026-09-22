@@ -9,6 +9,31 @@ const url = assertLoopbackDatabaseUrl(process.env.PARKOS_TEST_DATABASE_URL)
 const invoiceVerifier =
   'supabase/dev-only/20260903000000_verify_invoice_paid.sql'
 const cases = [
+  ...[
+    ['issuance', 'IP1', 'pending', ''],
+    ['issuance', 'IP3', 'pending', ''],
+    ['issuance', 'IP2', 'cancelled', ''],
+    ['issuance', 'IP6', 'suspended', ''],
+    ['issuance', 'IP5b', 'suspended', ''],
+    [
+      'cancellation',
+      'SETUP',
+      'active',
+      ' or v_sub_written is distinct from v_sub',
+    ],
+    ['cancellation', 'FP1', 'active', ''],
+    ['cancellation', 'FP2', 'active', ''],
+    ['cancellation', 'FP4', 'cancelled', ''],
+  ].map(([file, check, status, extra]) => {
+    const anchor = `    if v_status is distinct from '${status}'${extra} then\n      raise exception '${check} FAIL:`
+    return {
+      name: `Permit state observation rejects NULL: ${file} ${check}`,
+      verifier: `supabase/dev-only/DEV_ONLY_verify_permit_${file}.sql`,
+      scriptPattern: anchor,
+      scriptReplacement: '    v_status := null;\n' + anchor,
+      witness: `${check} FAIL:`,
+    }
+  }),
   ...['record_permit_payment', 'process_stripe_subscription_event'].flatMap(
     (name) => {
       const verifier =

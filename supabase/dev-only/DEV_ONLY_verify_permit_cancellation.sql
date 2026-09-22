@@ -12,10 +12,11 @@
 -- cancel_permit ran before Stripe, so a Stripe failure left a permit cancelled
 -- and its space released while the customer kept being billed.
 --
---   FP1  Stripe fails            -> intent recorded, permit still active, hold intact
---   FP2  Stripe ok, no webhook   -> permit still active, hold intact, not silently cancelled
+--   FP1  cancellation intent     -> permit still active, hold intact
+--   FP2  immediate reread        -> active state and hold unchanged
 --   FP3  operator cancels twice  -> idempotent, timestamp stable, one audit row
---   FP4  browser closes mid-flow -> webhook alone completes it, no browser involved
+--   FP4  deletion processor call -> cancels and releases the hold
+-- No browser lifecycle or external Stripe request is executed by this SQL file.
 --
 -- SETUP reaches the billed state the way production does, and nothing here
 -- writes stripe_subscription_id by hand. issue_permit leaves a permit 'pending'
@@ -27,6 +28,8 @@
 -- 'created' carries 'incomplete' and only reaches 'suspended'; the customer then
 -- pays and 'updated' carries 'active'. That second event is the Stripe
 -- confirmation step, and skipping it is why FP1-FP4 never saw an active permit.
+
+begin;
 
 do $$
 declare
@@ -89,7 +92,7 @@ begin
 
     select status, stripe_subscription_id into v_status, v_sub_written
       from public.permits where id = v_permit;
-    if v_status <> 'active' or v_sub_written is distinct from v_sub then
+    if v_status is distinct from 'active' or v_sub_written is distinct from v_sub then
       raise exception 'SETUP FAIL: permit is % holding %, expected active holding %',
         v_status, coalesce(v_sub_written, 'NULL'), v_sub; end if;
     -- The state the old fixture forged must be impossible even now.
@@ -101,8 +104,7 @@ begin
     select count(*) into v_audit_before from public.audit_log where target_id = v_permit;
 
     -- ---------------------------------------------------------------------
-    -- FP1: Stripe fails. The UI records intent, then the Stripe call errors.
-    -- Nothing else may have changed: the permit is still billable and held.
+    -- FP1: call the intent RPC directly; the permit remains billable and held.
     -- ---------------------------------------------------------------------
     perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
     v_req1 := public.request_permit_cancellation(v_permit, 'FP1 stripe failed');
@@ -110,7 +112,7 @@ begin
 
     select status, cancelled_at into v_status, v_cancelled_at
       from public.permits where id = v_permit;
-    if v_status <> 'active' then
+    if v_status is distinct from 'active' then
       raise exception 'FP1 FAIL: status became % before Stripe confirmed', v_status; end if;
     if v_cancelled_at is not null then
       raise exception 'FP1 FAIL: cancelled_at written before Stripe confirmed'; end if;
@@ -121,11 +123,10 @@ begin
       raise exception 'FP1 FAIL: expected 1 open hold, found % (space released early)', v_holds; end if;
 
     -- ---------------------------------------------------------------------
-    -- FP2: Stripe cancelled but the webhook never arrived. Identical ParkOS
-    -- state to FP1 -- the permit must NOT drift to cancelled on its own.
+    -- FP2: immediate state reread with no intervening processor call.
     -- ---------------------------------------------------------------------
     select status into v_status from public.permits where id = v_permit;
-    if v_status <> 'active' then
+    if v_status is distinct from 'active' then
       raise exception 'FP2 FAIL: permit self-cancelled without a webhook (%)', v_status; end if;
     select count(*) into v_holds from public.space_holds
      where permit_id = v_permit and released_at is null;
@@ -145,8 +146,8 @@ begin
         v_audit_before, v_audit_after; end if;
 
     -- ---------------------------------------------------------------------
-    -- FP4: the operator closed the browser. The webhook alone must finish the
-    -- job: status cancelled, hold released, audit written -- no UI involved.
+    -- FP4: call the subscription-deletion processor directly, then check
+    -- cancelled status, the released hold, and the preserved intent.
     -- ---------------------------------------------------------------------
     perform public.process_stripe_subscription_event(
       v_event, 'customer.subscription.deleted', v_permit, null, 'canceled',
@@ -154,7 +155,7 @@ begin
 
     select status, cancelled_at into v_status, v_cancelled_at
       from public.permits where id = v_permit;
-    if v_status <> 'cancelled' then
+    if v_status is distinct from 'cancelled' then
       raise exception 'FP4 FAIL: webhook did not cancel the permit (%)', v_status; end if;
     if v_cancelled_at is null then
       raise exception 'FP4 FAIL: cancelled_at not set by webhook'; end if;
@@ -181,8 +182,10 @@ end $$;
 
 select check_name, result
 from (values
-  ('FP1', 'PASS: Stripe failure leaves permit active, cancelled_at null, hold open'),
-  ('FP2', 'PASS: no webhook means no drift to cancelled and no hold release'),
+  ('FP1', 'PASS: intent RPC leaves permit active, cancelled_at null, hold open'),
+  ('FP2', 'PASS: immediate reread retains active state and its hold'),
   ('FP3', 'PASS: repeat cancel is idempotent, timestamp stable, one audit row'),
-  ('FP4', 'PASS: webhook alone cancels, releases the hold, and preserves the intent')
+  ('FP4', 'PASS: deletion processor cancels, releases the hold, and preserves the intent')
 ) as t(check_name, result);
+
+rollback;
