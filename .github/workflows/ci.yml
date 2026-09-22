@@ -83,6 +83,20 @@ jobs:
           echo "::notice title=supabase status keys::$(cut -d= -f1 "$RUNNER_TEMP/supabase.env" | tr '\n' ' ')"
           cat "$RUNNER_TEMP/supabase.env" >> "$GITHUB_ENV"
       - run: npm run db:seed:dev
+      - name: Report local privilege model
+        run: |
+          psql --no-psqlrc --set=ON_ERROR_STOP=1 "$PARKOS_TEST_DATABASE_URL" <<'SQL'
+          select rolname, rolbypassrls from pg_roles
+            where rolname in ('anon', 'authenticated', 'service_role');
+          select defaclrole::regrole as owner,
+                 defaclnamespace::regnamespace as schema,
+                 defaclobjtype as object_type, defaclacl as privileges
+            from pg_default_acl order by 1, 2, 3;
+          select grantee, table_name, privilege_type
+            from information_schema.role_table_grants
+            where table_schema = 'public' and grantee = 'service_role'
+            order by table_name, privilege_type;
+          SQL
       - name: Run all 17 SQL verifiers and prove fixture cleanup
         run: npm run test:db:all
       - run: npm run test:queries
