@@ -96,27 +96,22 @@ first — this file tracks work, not architecture.
   in its own session, a direct-SQL caller in that session can set too. What would help is making a
   future widening visible -- a verifier case asserting that a scheduled write still raises
   `OUTSIDE_OPERATING_HOURS` when the session has pre-set `parkos.walk_in_checkin`.
-- **The same miss-and-500 shape is still live in both permit webhook functions.**
-  `20260905000000_stripe_event_unresolved_payment.sql` fixed it in `process_stripe_event` only:
-  a charge that resolves to nothing now returns `{processed: false, outcome: 'payment_not_found'}`
-  instead of raising `PAYMENT_NOT_FOUND`, so the webhook answers 200 rather than 500ing and letting
-  Stripe retry an event that can never apply for days. Two sibling functions still raise on the
-  same "resolved by the supplied identifier, missed" path and will 500 identically:
-  - `public.record_permit_payment` —
-    `supabase/migrations/20260829000000_permit_payments.sql:156` raises `PERMIT_NOT_FOUND`.
-    Reached from `processPaidInvoice` in `supabase/functions/stripe-webhook/index.ts`, whose
-    200-ignored guard only catches an invoice carrying _no_ ParkOS identifier. An invoice carrying
-    a subscription id that is not ours — another product on the same platform Stripe account —
-    resolves, misses, and raises.
-  - `public.process_stripe_subscription_event` — current definition at
-    `supabase/migrations/20260904000000_drop_dead_invoice_paid_branch.sql:96` raises
-    `PERMIT_NOT_FOUND`. Reached from `processSubscriptionEvent` for `customer.subscription.*` and
-    `invoice.payment_failed`, with the same guard and the same hole.
-    Each is the same one-line change as the fixed one plus a verifier case, but a different function
-    and a different blast radius, so neither was folded into a commit scoped to one bug. Their
-    `PERMIT_IDENTIFIER_REQUIRED` raises should _stay_ raises, for the reason
-    `PAYMENT_IDENTIFIER_REQUIRED` did: being handed no identifier at all is a payload we do not
-    understand, not an event that belongs to somebody else.
+- **Unrelated subscription events no longer crash either permit webhook processor (implemented;
+  migration deployment remains explicit).** Migration
+  `20260922000000_ignore_unrelated_permit_events.sql` makes `record_permit_payment` and
+  `process_stripe_subscription_event` return `{processed: false, outcome: 'permit_not_found'}`
+  when a nonblank Stripe subscription ID matches no permit and no ParkOS permit ID was supplied.
+  The existing webhook acknowledges that result with HTTP 200. No event claim, payment,
+  lifecycle, hold or audit row changes, so manual replay can still succeed if the subscription
+  becomes resolvable later. Both processors retain errors for absent/blank identifiers,
+  mismatches and unauthorized callers. An explicit ParkOS permit ID that cannot be found still
+  raises `PERMIT_NOT_FOUND`: acknowledging that case could hide missing application data.
+  Checks 6-8 in `verify:unresolved-payment` exercise all six permit routes, repeated misses,
+  unchanged full table snapshots, error cases, and successful replay followed by deduplication.
+  Signed handler tests verify HTTP 200/processed=false on all six routes; ten SQL mutations
+  prove the verifier rejects the old crash, NULL results, hidden writes, swallowed explicit-ID
+  failures and accepted blank identifiers. This closes the unrelated-subscription retry loop;
+  reconciliation and missing ParkOS records remain separate work.
 - **No reconciliation for a permit cancellation Stripe confirmed but no webhook completed.**
   Cancelling a Stripe-billed permit now calls Stripe first and lets
   `customer.subscription.deleted` write the cancellation, so a failed Stripe call leaves the

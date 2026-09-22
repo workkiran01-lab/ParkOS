@@ -14,15 +14,19 @@ declare
   v_customer uuid;
   v_count integer;
   v_result timestamptz;
+  v_zone_case record;
+  v_walk_in uuid;
+  v_caller text;
 begin
   begin
-    if not public.is_valid_iana_timezone('America/Los_Angeles')
-       or not public.is_valid_iana_timezone('UTC')
-       or public.is_valid_iana_timezone('PST')
-       or public.is_valid_iana_timezone('EST')
-       or public.is_valid_iana_timezone('Pacific') then
-      raise exception 'TIME FAIL: IANA timezone validation disagrees with policy';
-    end if;
+    for v_zone_case in select * from (values
+      ('America/Los_Angeles', true), ('UTC', true),
+      ('PST', false), ('EST', false), ('Pacific', false)
+    ) expected(zone, valid) loop
+      if public.is_valid_iana_timezone(v_zone_case.zone) is distinct from v_zone_case.valid then
+        raise exception 'TIME FAIL: IANA timezone validation disagrees with policy for %', v_zone_case.zone;
+      end if;
+    end loop;
 
     begin
       update public.facilities set timezone = 'PST' where id = v_facility;
@@ -43,7 +47,7 @@ begin
     select public.facility_local_to_utc(
       v_facility, timestamp '2026-01-15 10:30'
     ) into v_result;
-    if v_result <> timestamptz '2026-01-15 18:30:00+00' then
+    if v_result is distinct from timestamptz '2026-01-15 18:30:00+00' then
       raise exception 'TIME FAIL: normal conversion returned %', v_result;
     end if;
 
@@ -65,42 +69,42 @@ begin
     select public.facility_local_to_utc(
       v_facility, timestamp '2026-11-01 01:30'
     ) into v_result;
-    if v_result <> timestamptz '2026-11-01 08:30:00+00' then
+    if v_result is distinct from timestamptz '2026-11-01 08:30:00+00' then
       raise exception 'TIME FAIL: fall-back overlap chose %, expected 08:30Z', v_result;
     end if;
 
     update public.facilities
        set operating_hours = '{"type":"daily","open":"06:00","close":"22:00"}'
      where id = v_facility;
-    if not public.facility_accepts_reservation_window(
+    if public.facility_accepts_reservation_window(
       v_facility,
       timestamp '2028-02-15 06:00' at time zone 'America/Los_Angeles',
       timestamp '2028-02-15 22:00' at time zone 'America/Los_Angeles'
-    ) then raise exception 'TIME FAIL: exact daily boundaries were rejected'; end if;
+    ) is distinct from true then raise exception 'TIME FAIL: exact daily boundaries were rejected'; end if;
     if public.facility_accepts_reservation_window(
       v_facility,
       timestamp '2028-02-15 05:59' at time zone 'America/Los_Angeles',
       timestamp '2028-02-15 07:00' at time zone 'America/Los_Angeles'
-    ) then raise exception 'TIME FAIL: before-opening window was accepted'; end if;
+    ) is distinct from false then raise exception 'TIME FAIL: before-opening window was accepted'; end if;
     if public.facility_accepts_reservation_window(
       v_facility,
       timestamp '2028-02-15 21:00' at time zone 'America/Los_Angeles',
       timestamp '2028-02-15 22:01' at time zone 'America/Los_Angeles'
-    ) then raise exception 'TIME FAIL: after-closing window was accepted'; end if;
+    ) is distinct from false then raise exception 'TIME FAIL: after-closing window was accepted'; end if;
 
     update public.facilities
        set operating_hours = '{"type":"daily","open":"22:00","close":"06:00"}'
      where id = v_facility;
-    if not public.facility_accepts_reservation_window(
+    if public.facility_accepts_reservation_window(
       v_facility,
       timestamp '2028-02-15 22:00' at time zone 'America/Los_Angeles',
       timestamp '2028-02-16 06:00' at time zone 'America/Los_Angeles'
-    ) then raise exception 'TIME FAIL: overnight exact boundaries were rejected'; end if;
+    ) is distinct from true then raise exception 'TIME FAIL: overnight exact boundaries were rejected'; end if;
     if public.facility_accepts_reservation_window(
       v_facility,
       timestamp '2028-02-15 21:59' at time zone 'America/Los_Angeles',
       timestamp '2028-02-15 23:00' at time zone 'America/Los_Angeles'
-    ) then raise exception 'TIME FAIL: pre-overnight-opening window was accepted'; end if;
+    ) is distinct from false then raise exception 'TIME FAIL: pre-overnight-opening window was accepted'; end if;
 
     -- 2028-02-14 is Monday, 15 Tuesday, and 16 Wednesday.
     update public.facilities set operating_hours = '{
@@ -109,35 +113,35 @@ begin
         "tue":"closed","wed":"24_hours",
         "thu":"closed","fri":"closed","sat":"closed","sun":"closed"
       }}' where id = v_facility;
-    if not public.facility_accepts_reservation_window(
+    if public.facility_accepts_reservation_window(
       v_facility,
       timestamp '2028-02-14 09:00' at time zone 'America/Los_Angeles',
       timestamp '2028-02-14 17:00' at time zone 'America/Los_Angeles'
-    ) then raise exception 'TIME FAIL: weekly open day rejected'; end if;
+    ) is distinct from true then raise exception 'TIME FAIL: weekly open day rejected'; end if;
     if public.facility_accepts_reservation_window(
       v_facility,
       timestamp '2028-02-15 10:00' at time zone 'America/Los_Angeles',
       timestamp '2028-02-15 11:00' at time zone 'America/Los_Angeles'
-    ) then raise exception 'TIME FAIL: weekly closed day accepted'; end if;
-    if not public.facility_accepts_reservation_window(
+    ) is distinct from false then raise exception 'TIME FAIL: weekly closed day accepted'; end if;
+    if public.facility_accepts_reservation_window(
       v_facility,
       timestamp '2028-02-16 00:00' at time zone 'America/Los_Angeles',
       timestamp '2028-02-17 00:00' at time zone 'America/Los_Angeles'
-    ) then raise exception 'TIME FAIL: weekly 24-hour day rejected'; end if;
+    ) is distinct from true then raise exception 'TIME FAIL: weekly 24-hour day rejected'; end if;
     if public.facility_accepts_reservation_window(
       v_facility,
       timestamp '2028-02-14 16:00' at time zone 'America/Los_Angeles',
       timestamp '2028-02-16 01:00' at time zone 'America/Los_Angeles'
-    ) then raise exception 'TIME FAIL: multi-day window crossed a closure'; end if;
+    ) is distinct from false then raise exception 'TIME FAIL: multi-day window crossed a closure'; end if;
 
     update public.facilities
        set operating_hours = '{"type":"24_hours"}'
      where id = v_facility;
-    if not public.facility_accepts_reservation_window(
+    if public.facility_accepts_reservation_window(
       v_facility,
       timestamptz '2026-03-07 00:00:00+00',
       timestamptz '2026-03-10 00:00:00+00'
-    ) then raise exception 'TIME FAIL: multi-day 24-hour DST window rejected'; end if;
+    ) is distinct from true then raise exception 'TIME FAIL: multi-day 24-hour DST window rejected'; end if;
 
     -- Prove the same predicate hides spaces and blocks authoritative creation.
     select s.id into v_space
@@ -182,8 +186,75 @@ begin
       if sqlerrm <> 'OUTSIDE_OPERATING_HOURS' then raise; end if;
     end;
 
+    -- A direct-SQL staff session can set arbitrary custom GUCs. That must not
+    -- authorize a scheduled insert outside hours.
+    perform set_config('parkos.walk_in_checkin', 'on', true);
+    begin
+      perform public.create_reservation(v_space, v_customer, null,
+        '2028-02-15 18:00:00+00', '2028-02-15 19:00:00+00');
+      raise exception 'WALKIN FAIL: forged GUC bypassed scheduled operating hours';
+    exception when sqlstate 'P0001' then
+      if sqlerrm <> 'OUTSIDE_OPERATING_HOURS' then raise; end if;
+    end;
+    perform set_config('parkos.walk_in_checkin', 'off', true);
+
     execute format('set local role %I', v_original_role);
-    if public.safe_timezone('America/Los_Angeles') <> 'America/Los_Angeles' then
+    foreach v_caller in array array['anon','authenticated','service_role'] loop
+      if has_table_privilege(v_caller, 'public.walk_in_authorizations',
+          'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER') then
+        raise exception 'WALKIN FAIL: authorization table grants client privileges to %', v_caller;
+      end if;
+    end loop;
+    if not (select relrowsecurity from pg_class where oid = 'public.walk_in_authorizations'::regclass) then
+      raise exception 'WALKIN FAIL: authorization table lacks RLS';
+    end if;
+
+    -- An attendant can still record and price a car at a fully closed lot.
+    perform set_config('request.jwt.claims',
+      '{"sub":"00000000-0000-0000-0000-0000000000a3","role":"authenticated"}', true);
+    perform set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-0000000000a3', true);
+    set local role authenticated;
+    select reservation_id into v_walk_in from public.check_in_walk_in(
+      v_space, v_customer, null, '2028-02-15 18:00:00+00', '2028-02-15 19:00:00+00');
+    begin
+      perform public.check_in_walk_in(v_space, v_customer, null,
+        '2028-02-15 18:00:00+00', '2028-02-15 19:00:00+00');
+      raise exception 'WALKIN FAIL: overlapping walk-in was accepted';
+    exception when sqlstate 'P0001' then
+      if sqlerrm <> 'SPACE_UNAVAILABLE' then raise; end if;
+    end;
+    begin
+      perform public.create_reservation(v_space, v_customer, null,
+        '2028-02-15 20:00:00+00', '2028-02-15 21:00:00+00');
+      raise exception 'WALKIN FAIL: successful or failed walk-in left an exemption armed';
+    exception when sqlstate 'P0001' then
+      if sqlerrm <> 'OUTSIDE_OPERATING_HOURS' then raise; end if;
+    end;
+
+    execute format('set local role %I', v_original_role);
+    if (select count(*) from public.reservations r
+        join public.space_holds h on h.reservation_id = r.id
+        where r.id = v_walk_in and r.status = 'active' and r.total_cents = 500
+          and r.checked_in_by = '00000000-0000-0000-0000-0000000000a3'
+          and r.checked_in_at is not null and h.released_at is null) <> 1
+       or (select count(*) from public.audit_log where target_id = v_walk_in and action = 'check_in_walk_in') <> 1
+       or (select count(*) from public.walk_in_authorizations) <> 0 then
+      raise exception 'WALKIN FAIL: exemption lost pricing/check-in/hold/audit or leaked authorization';
+    end if;
+    perform set_config('request.jwt.claims',
+      '{"sub":"00000000-0000-0000-0000-0000000000b1","role":"authenticated"}', true);
+    perform set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-0000000000b1', true);
+    set local role authenticated;
+    begin
+      perform public.check_in_walk_in(v_space, v_customer, null,
+        '2028-02-15 20:00:00+00', '2028-02-15 21:00:00+00');
+      raise exception 'WALKIN FAIL: foreign admin checked in a walk-in';
+    exception when sqlstate 'P0001' then
+      if sqlerrm <> 'ROLE_NOT_ALLOWED' then raise; end if;
+    end;
+    execute format('set local role %I', v_original_role);
+    raise notice 'WALKIN PASS: forged GUC refused; closed-hours attendant walk-in priced/audited; no leaked token; foreign admin refused';
+    if public.safe_timezone('America/Los_Angeles') is distinct from 'America/Los_Angeles' then
       raise exception 'TIME FAIL: canonical report timezone changed';
     end if;
     select count(*) into v_count from public.facilities f

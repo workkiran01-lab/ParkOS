@@ -9,7 +9,7 @@ on:
       - 'booking/**'
       - 'design/**'
       - 'hardening/**'
-      - 'feature/nav-restructure'
+      - 'fix/remaining-defects'
 
 env:
   SUPABASE_TELEMETRY_DISABLED: '1'
@@ -50,6 +50,7 @@ jobs:
           fi
           exit $rc
       - run: npm test
+      - run: npm run test:webhook-mutations
       - run: npm run build
       - run: git diff --exit-code -- src/routeTree.gen.ts
 
@@ -82,9 +83,11 @@ jobs:
           echo "::notice title=supabase status keys::$(cut -d= -f1 "$RUNNER_TEMP/supabase.env" | tr '\n' ' ')"
           cat "$RUNNER_TEMP/supabase.env" >> "$GITHUB_ENV"
       - run: npm run db:seed:dev
-      - run: npm run test:db
+      - name: Run all 17 SQL verifiers and prove fixture cleanup
+        run: npm run test:db:all
       - run: npm run test:queries
       - run: npm run test:correction-race
+      - run: npm run test:last-admin
       - name: Concurrency test
         shell: bash
         run: |
@@ -123,5 +126,6 @@ jobs:
             | sed 's/="\(.*\)"$/=\1/' >> "$GITHUB_ENV"
       - run: npm run db:seed:dev
       - run: npm run test:financial
+      - run: npm run test:sql-mutations
       - if: always()
         run: npx supabase stop --no-backup

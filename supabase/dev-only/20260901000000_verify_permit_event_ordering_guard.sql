@@ -18,6 +18,13 @@
 
 begin;
 
+do $$
+begin
+  if exists (select 1 from public.permits) or exists (select 1 from public.reservations) then
+    raise exception 'SETUP FAIL: cron witnesses require the disposable seed with no existing bookings/permits';
+  end if;
+end $$;
+
 -- ---------------------------------------------------------------------------
 -- Fixtures in the seeded Harbor Park organization.
 -- ---------------------------------------------------------------------------
@@ -293,6 +300,48 @@ begin
 end $$;
 
 -- ---------------------------------------------------------------------------
+-- Run the registered commands against positive fixtures. Active registrations
+-- alone would still pass if their commands had become SELECT 1.
+insert into public.reservations
+  (id, org_id, facility_id, space_id, customer_id, during, status,
+   booking_code, price_breakdown, total_cents, currency)
+values ('ce000000-0000-0000-0000-0000000000d1', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+        'ce000000-0000-0000-0000-0000000000f1', 'ce000000-0000-0000-0000-0000000000a1',
+        'ce000000-0000-0000-0000-0000000000f4',
+        tstzrange(now() - interval '2 hours', now() - interval '1 hour', '[)'),
+        'confirmed', 'PKS-CRNAAA', '{"currency":"USD","line_items":[],"total_cents":1000}', 1000, 'USD');
+insert into public.space_holds (org_id, space_id, reservation_id, during, hold_type)
+values ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'ce000000-0000-0000-0000-0000000000a1',
+        'ce000000-0000-0000-0000-0000000000d1',
+        tstzrange(now() - interval '2 hours', now() - interval '1 hour', '[)'), 'reservation');
+
+do $$
+declare v_command text; v_count integer;
+begin
+  select command into v_command from cron.job where jobname = 'parkos-permit-reconciliation';
+  if v_command is distinct from 'select public.log_permit_reconciliation()' then
+    raise exception 'CRON FAIL: reconciliation command is %', v_command;
+  end if;
+  execute v_command into v_count;
+  -- P1/P4/P5 are active without holds; P2/P7 are suspended. Exactly five.
+  if v_count is distinct from 5 then
+    raise exception 'CRON FAIL: reconciliation command found %, expected 5', v_count;
+  end if;
+
+  select command into v_command from cron.job where jobname = 'parkos-no-show-sweep';
+  if v_command is distinct from 'select public.mark_no_shows()' then
+    raise exception 'CRON FAIL: no-show command is %', v_command;
+  end if;
+  execute v_command into v_count;
+  if v_count is distinct from 1
+     or (select status from public.reservations where id = 'ce000000-0000-0000-0000-0000000000d1') is distinct from 'no_show'
+     or (select count(*) from public.space_holds where reservation_id = 'ce000000-0000-0000-0000-0000000000d1' and released_at is not null) <> 1
+     or (select count(*) from public.audit_log where target_id = 'ce000000-0000-0000-0000-0000000000d1' and action = 'auto_no_show') <> 1 then
+    raise exception 'CRON FAIL: no-show command did not mark, release and audit exactly one overdue booking';
+  end if;
+  raise notice 'CRON PASS: registered reconciliation command found 5; no-show command marked/released/audited 1';
+end $$;
+
 -- Evidence, emitted as rows because the Management API suppresses RAISE NOTICE.
 --
 -- The DO blocks above already abort the whole script on any failure, so reaching

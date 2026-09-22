@@ -177,11 +177,11 @@ select set_config('request.jwt.claims', '{"role":"service_role"}', true);
 
 
 -- ---------------------------------------------------------------------------
--- CHECK 4 -- input validation runs before anything is written. Each of these is
--- a payload we would rather reject loudly than book as revenue.
+-- CHECK 4 -- input validation runs before anything is written. Malformed
+-- payloads remain errors; an unrelated subscription is an explicit no-op.
 -- ---------------------------------------------------------------------------
 do $$
-declare v_msg text; v int;
+declare v_msg text; v int; v_result jsonb;
 begin
   begin
     perform public.record_permit_payment(
@@ -230,14 +230,11 @@ begin
     if v_msg <> 'INVALID_CURRENCY' then raise; end if;
   end;
 
-  begin
-    perform public.record_permit_payment(
-      'evt_x', null, 'sub_no_such_subscription', 'in_x', 15000, 'usd', null, true);
-    raise exception 'CHECK4 FAIL: an unknown subscription resolved to a permit';
-  exception when others then
-    get stacked diagnostics v_msg = message_text;
-    if v_msg <> 'PERMIT_NOT_FOUND' then raise; end if;
-  end;
+  v_result := public.record_permit_payment(
+    'evt_x', null, 'sub_no_such_subscription', 'in_x', 15000, 'usd', null, true);
+  if v_result is distinct from '{"processed":false,"outcome":"permit_not_found"}'::jsonb then
+    raise exception 'CHECK4 FAIL: an unrelated subscription returned %', v_result;
+  end if;
 
   begin
     perform public.record_permit_payment(
@@ -436,6 +433,26 @@ begin
   if (v_result ->> 'processed')::boolean is not true then
     raise exception 'CHECK8 FAIL: money collected on a cancelled permit was dropped: %',
       v_result;
+  end if;
+
+  -- A success flag is not evidence of a ledger write. Pin the raw row, claim,
+  -- audit and retained cancellation independently of the RPC response.
+  if (select count(*) from public.permit_payments
+       where permit_id = 'dd000000-0000-0000-0000-0000000000e2'
+         and org_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+         and stripe_invoice_id = 'in_devtest_0003'
+         and amount_cents = 15000 and currency = 'USD' and status = 'succeeded') <> 1 then
+    raise exception 'CHECK8 FAIL: cancelled-permit payment is missing from the ledger';
+  end if;
+  if (select count(*) from public.audit_log a join public.permit_payments p on p.id = a.target_id
+       where p.stripe_invoice_id = 'in_devtest_0003'
+         and a.action = 'record_permit_payment' and a.target_table = 'permit_payments'
+         and a.actor_id is null) <> 1
+     or (select count(*) from public.processed_stripe_events
+          where event_id = 'evt_devtest_0004' and org_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa') <> 1
+     or (select status from public.permits where id = 'dd000000-0000-0000-0000-0000000000e2')
+          is distinct from 'cancelled' then
+    raise exception 'CHECK8 FAIL: cancelled-permit receipt lacks audit/claim or changed permit status';
   end if;
 
   raise notice 'CHECK8 PASS: money collected against a cancelled permit is still booked';

@@ -92,6 +92,30 @@ values
 -- Impersonate the webhook's service-role client for every call below.
 select set_config('request.jwt.claims', '{"role":"service_role"}', true);
 
+-- A routing regression must not poison the ID before the money recorder sees
+-- it. Both state processors reject this event; scenario A then replays it.
+do $$
+begin
+  begin
+    perform public.process_stripe_subscription_event(
+      'evt_oob_paid_A', 'invoice.paid',
+      'cc000000-0000-0000-0000-0000000000e1', 'sub_devtest_invoicepaid_01');
+    raise exception 'ROUTING FAIL: subscription processor accepted invoice.paid';
+  exception when sqlstate '22023' then
+    if sqlerrm <> 'STRIPE_EVENT_TYPE_UNSUPPORTED' then raise; end if;
+  end;
+  begin
+    perform public.process_stripe_event('evt_oob_paid_A', 'invoice.paid');
+    raise exception 'ROUTING FAIL: reservation processor accepted invoice.paid';
+  exception when sqlstate '22023' then
+    if sqlerrm <> 'STRIPE_EVENT_TYPE_UNSUPPORTED' then raise; end if;
+  end;
+  if exists (select 1 from public.processed_stripe_events where event_id = 'evt_oob_paid_A') then
+    raise exception 'ROUTING FAIL: rejected invoice event was claimed';
+  end if;
+  raise notice 'ROUTING PASS: both processors reject invoice.paid before claiming; replay remains available';
+end $$;
+
 -- ---------------------------------------------------------------------------
 -- SCENARIO A -- OUT-OF-BAND payment. Arrives on invoice.paid ALONE, carries no
 -- PaymentIntent because no charge was made. Must book exactly once, with
@@ -364,6 +388,27 @@ begin
 end $$;
 
 reset role;
+
+-- Same event delivered twice, distinct from the two-event/same-invoice cases
+-- above. The altered invoice ID makes the event-ID guard itself load-bearing.
+do $$
+declare v_result jsonb;
+begin
+  v_result := public.record_permit_payment(
+    'evt_oob_paid_A', 'cc000000-0000-0000-0000-0000000000e1',
+    'sub_devtest_invoicepaid_01', 'in_must_not_be_written', 15000, 'usd', null, true);
+  if v_result ->> 'outcome' is distinct from 'duplicate_event'
+     or v_result ->> 'processed' is distinct from 'false' then
+    raise exception 'DEDUP FAIL: replay returned %', v_result;
+  end if;
+  if (select count(*) from public.permit_payments) <> (select rows0 + 4 from baseline)
+     or (select coalesce(sum(amount_cents), 0) from public.permit_payments) <> (select cents0 + 60000 from baseline)
+     or (select count(*) from public.audit_log where action = 'record_permit_payment') <> (select audit0 + 4 from baseline)
+     or (select count(*) from public.processed_stripe_events where event_id = 'evt_oob_paid_A') <> 1 then
+    raise exception 'DEDUP FAIL: replay changed money, audit or event-claim counts';
+  end if;
+  raise notice 'DEDUP PASS: replay is duplicate_event; 4 payments, 60000 cents, 4 audits, one claim for replayed ID';
+end $$;
 
 -- The CLI surfaces only the LAST result set, so the per-scenario evidence and
 -- the totals are unioned into one table rather than selected separately.
