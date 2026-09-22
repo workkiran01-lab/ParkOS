@@ -1,31 +1,6 @@
--- DEV-ONLY verification that dropping the 'invoice.paid' arm from
--- process_stripe_subscription_event changed nothing any caller can reach.
---
---   npm run verify:dead-branch
---
--- Assertion-only: every check RAISES on failure. One transaction, ends in
--- ROLLBACK, so no fixture survives.
---
--- HOW THIS IS TESTED. The arm was unreachable through the webhook, so a test
--- that only drives the webhook's real routes could never observe it at all --
--- it would pass whether or not the arm existed, which proves nothing. Instead
--- this calls the function DIRECTLY with p_event_type = 'invoice.paid', which no
--- production caller does, and pins the result. Every REACHABLE event type is
--- driven through the same matrix so that a regression in the shared branch --
--- the real risk in editing that IN list -- fails here.
---
--- An invoice payload carries no subscription status, so the webhook passes
--- p_stripe_status = NULL for invoice events; subscription events carry a real
--- status. The matrix supplies each accordingly.
---
--- Expected values below were captured from the function BEFORE the arm was
--- removed and re-checked after, so rows 5-16 are a genuine before/after
--- comparison rather than a restatement of the new code. Before removal, row 1
--- read 'pending -> suspended' with the subscription id and period written; that
--- is the ONLY behaviour this migration changes, and nothing can reach it.
---
--- Depends on the dev seed (DEV_ONLY_seed_dev_orgs.sql) for Org A:
---   Org A (Harbor Park Group) = aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa
+-- DEV-ONLY dispatch contract: misrouted invoice.paid is rejected without a claim.
+-- Supported subscription events still follow the explicit state matrix.
+-- Fixtures and function calls roll back together.
 
 begin;
 
@@ -34,14 +9,12 @@ create temporary table expected (
   end_status text, outcome text, writes_columns boolean
 ) on commit drop;
 
--- writes_columns: whether the arm taken is one that UPDATEs permits, observed
--- as "the billing period got written". The removed arm did; the else arm the
--- invoice.paid rows now fall into does not.
+-- writes_columns observes whether the billing period was written.
 insert into expected values
-  ( 1, 'invoice.paid',                  'pending',   'pending',   'permit_pending',   false),
-  ( 2, 'invoice.paid',                  'suspended', 'suspended', 'permit_suspended', false),
-  ( 3, 'invoice.paid',                  'active',    'active',    'permit_active',    false),
-  ( 4, 'invoice.paid',                  'cancelled', 'cancelled', 'permit_cancelled', false),
+  ( 1, 'invoice.paid',                  'pending',   'pending',   'STRIPE_EVENT_TYPE_UNSUPPORTED',   false),
+  ( 2, 'invoice.paid',                  'suspended', 'suspended', 'STRIPE_EVENT_TYPE_UNSUPPORTED', false),
+  ( 3, 'invoice.paid',                  'active',    'active',    'STRIPE_EVENT_TYPE_UNSUPPORTED',    false),
+  ( 4, 'invoice.paid',                  'cancelled', 'cancelled', 'STRIPE_EVENT_TYPE_UNSUPPORTED', false),
   ( 5, 'customer.subscription.created', 'pending',   'active',    'permit_active',    true),
   ( 6, 'customer.subscription.created', 'suspended', 'active',    'permit_active',    true),
   ( 7, 'customer.subscription.created', 'active',    'active',    'permit_active',    true),
@@ -110,10 +83,23 @@ begin
 
       v_supplied := case when v_event like 'invoice.%' then null else 'active' end;
 
-      v_result := public.process_stripe_subscription_event(
-        'evt_dead_' || n, v_event, v_permit, 'sub_dead_' || n,
-        v_supplied,
-        now() - interval '1 day', now() + interval '29 days', null);
+      begin
+        v_result := public.process_stripe_subscription_event(
+          'evt_dead_' || n, v_event, v_permit, 'sub_dead_' || n,
+          v_supplied,
+          now() - interval '1 day', now() + interval '29 days', null);
+        if v_event = 'invoice.paid' then
+          raise exception 'ROUTING FAIL: invoice.paid accepted by state processor';
+        end if;
+      exception when sqlstate '22023' then
+        if v_event <> 'invoice.paid' or sqlerrm <> 'STRIPE_EVENT_TYPE_UNSUPPORTED' then raise; end if;
+        v_result := jsonb_build_object('outcome', sqlerrm);
+      end;
+      if v_event = 'invoice.paid' and exists (
+        select 1 from public.processed_stripe_events where event_id = 'evt_dead_' || n
+      ) then
+        raise exception 'ROUTING FAIL: rejected event claimed an ID';
+      end if;
 
       select status, stripe_subscription_id, current_period_end
         into v_status, v_sub, v_pend
@@ -132,6 +118,12 @@ end $$;
 do $$
 declare r record; v int := 0;
 begin
+  if (select count(*) from expected) <> 16
+     or (select count(*) from actual) <> 16
+     or exists (select seq from expected except all select seq from actual)
+     or exists (select seq from actual except all select seq from expected) then
+    raise exception 'CHECK1 FAIL: state matrix must contain each of 16 scenarios exactly once';
+  end if;
   for r in
     select e.seq, e.event_type, e.start_status,
            e.end_status as exp_status, a.end_status as got_status,
@@ -153,7 +145,7 @@ begin
 end $$;
 
 -- ---------------------------------------------------------------------------
--- CHECK 2 -- invoice.paid is now completely inert: it writes NOTHING. The
+-- CHECK 2 -- rejected invoice.paid writes nothing and claims no event. The
 -- pending permit is the witness, because it starts with a NULL subscription id
 -- and the removed arm used to fill it in.
 -- ---------------------------------------------------------------------------

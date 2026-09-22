@@ -88,13 +88,15 @@ values
    tstzrange('2026-03-08 08:00:00+00', '2026-03-08 09:30:00+00', '[)'),
    'active', 'PKS-TEST25', '{"currency":"USD","line_items":[],"total_cents":0}', 0),
 
-  -- E004 an ordinary $50 session, checked in, used for the money checks.
+  -- E004 a $50 session, Aug 25 08:00-16:00 PDT. CHECK9 departs at
+  -- 19:00 PDT on the SAME local day: three hours share one 1200c cap.
+  -- Relative now() fixtures crossed midnight in CI and charged two caps.
   ('ff000000-0000-0000-0000-00000000e004',
    'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
    'ff000000-0000-0000-0000-0000000000f1',
    'ff000000-0000-0000-0000-0000000000f3',
    'ff000000-0000-0000-0000-0000000000f5',
-   tstzrange(now() - interval '2 hours', now() + interval '6 hours', '[)'),
+   tstzrange('2026-08-25 15:00:00+00', '2026-08-25 23:00:00+00', '[)'),
    'active', 'PKS-TEST26', '{"currency":"USD","line_items":[],"total_cents":5000}', 5000),
 
   -- E005 archived, and E006 cancelled: the two lookup states that must not
@@ -118,7 +120,7 @@ values
 update public.reservations set archived_at = now()
  where id = 'ff000000-0000-0000-0000-00000000e005';
 
-update public.reservations set checked_in_at = now() - interval '2 hours'
+update public.reservations set checked_in_at = '2026-08-25 15:00:00+00'
  where id = 'ff000000-0000-0000-0000-00000000e004';
 
 -- Act as the Org A admin from here: every function under test is staff-gated.
@@ -146,10 +148,10 @@ begin
 
   v_items := jsonb_array_length(v_breakdown -> 'line_items');
 
-  if v_cents <> 2200 then
+  if v_cents is distinct from 2200 then
     raise exception 'CHECK1 FAIL: cross-midnight overstay = %c, expected 2200c', v_cents;
   end if;
-  if v_items <> 2 then
+  if v_items is distinct from 2 then
     raise exception 'CHECK1 FAIL: expected 2 per-day line items, found %', v_items;
   end if;
 
@@ -174,15 +176,15 @@ begin
   v_items := jsonb_array_length(v_breakdown -> 'line_items');
   v_hours := (v_breakdown -> 'line_items' -> 0 ->> 'hours')::numeric;
 
-  if v_items <> 1 then
+  if v_items is distinct from 1 then
     raise exception
       'CHECK2 FAIL: fall-back day split into % line items, expected 1', v_items;
   end if;
-  if v_hours <> 25 then
+  if v_hours is distinct from 25 then
     raise exception
       'CHECK2 FAIL: fall-back local day measured % hours, expected 25', v_hours;
   end if;
-  if v_cents <> 1200 then
+  if v_cents is distinct from 1200 then
     raise exception
       'CHECK2 FAIL: fall-back overstay = %c, expected one 1200c cap', v_cents;
   end if;
@@ -205,7 +207,7 @@ begin
     from public.calculate_overstay(
       'ff000000-0000-0000-0000-00000000e003', '2026-03-08 10:00:00+00');
 
-  if v_cents <> 250 then
+  if v_cents is distinct from 250 then
     raise exception
       'CHECK3 FAIL: spring-forward overstay = %c, expected 250c for 30 real minutes',
       v_cents;
@@ -224,14 +226,14 @@ begin
   select overstay_cents into v_cents
     from public.calculate_overstay(
       'ff000000-0000-0000-0000-00000000e001', '2026-08-20 05:00:00+00');
-  if v_cents <> 0 then
+  if v_cents is distinct from 0 then
     raise exception 'CHECK4 FAIL: on-time departure charged %c', v_cents;
   end if;
 
   select overstay_cents into v_cents
     from public.calculate_overstay(
       'ff000000-0000-0000-0000-00000000e001', '2026-08-20 03:00:00+00');
-  if v_cents <> 0 then
+  if v_cents is distinct from 0 then
     raise exception 'CHECK4 FAIL: early departure charged %c', v_cents;
   end if;
 
@@ -375,10 +377,10 @@ begin
     from public.record_booth_payment(
       'ff000000-0000-0000-0000-00000000e004', 2000, 'cash', 'partial at gate');
 
-  if v_balance <> 3000 then
+  if v_balance is distinct from 3000 then
     raise exception 'CHECK8 FAIL: balance after $20 = %c, expected 3000c', v_balance;
   end if;
-  if public.reservation_balance_cents('ff000000-0000-0000-0000-00000000e004') <> 3000 then
+  if public.reservation_balance_cents('ff000000-0000-0000-0000-00000000e004') is distinct from 3000 then
     raise exception 'CHECK8 FAIL: stored balance disagrees with the returned one';
   end if;
 
@@ -415,24 +417,24 @@ begin
     into v_final, v_overstay, v_collected, v_balance
     from public.check_out_reservation(
       'ff000000-0000-0000-0000-00000000e004',
-      now() + interval '9 hours',
+      '2026-08-26 02:00:00+00',
       'card');
 
-  if v_overstay <> 1200 then
+  if v_overstay is distinct from 1200 then
     raise exception 'CHECK9 FAIL: overstay = %c, expected the 1200c cap', v_overstay;
   end if;
-  if v_final <> 6200 then
+  if v_final is distinct from 6200 then
     raise exception 'CHECK9 FAIL: final total = %c, expected 6200c', v_final;
   end if;
   -- 6200 owed, 2000 already taken in CHECK8, so 4200 settles it.
-  if v_collected <> 4200 or v_balance <> 0 then
+  if v_collected is distinct from 4200 or v_balance is distinct from 0 then
     raise exception 'CHECK9 FAIL: collected %c leaving %c, expected 4200c leaving 0c',
       v_collected, v_balance;
   end if;
 
   select status into v_status from public.reservations
    where id = 'ff000000-0000-0000-0000-00000000e004';
-  if v_status <> 'completed' then
+  if v_status is distinct from 'completed' then
     raise exception 'CHECK9 FAIL: reservation is % after check-out', v_status;
   end if;
 

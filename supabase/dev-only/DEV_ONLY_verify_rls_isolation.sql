@@ -10,7 +10,7 @@
 begin;
 
 -- ---------------------------------------------------------------------------
--- CHECK 0: the DDL actually landed — 21 RLS-enabled tables, 61 policies,
+-- CHECK 0: the DDL actually landed — 22 RLS-enabled tables, 61 policies,
 -- all authorization/bootstrap/lifecycle functions present and SECURITY DEFINER.
 -- ---------------------------------------------------------------------------
 do $$
@@ -24,9 +24,9 @@ begin
                        'permits','price_rules','space_holds','invites','audit_log',
                        'payments','processed_stripe_events','vehicle_photos',
                        'booth_payments','receipts','account_status',
-                       'permit_payments');
-  if v <> 21 then
-    raise exception 'CHECK0 FAIL: expected 21 RLS-enabled tables, found %', v;
+                       'permit_payments','walk_in_authorizations');
+  if v <> 22 then
+    raise exception 'CHECK0 FAIL: expected 22 RLS-enabled tables, found %', v;
   end if;
 
   -- 36 through Week 4, +1 in Week 5 (space_holds_update for release-early),
@@ -101,7 +101,7 @@ begin
   if v <> 1 then
     raise exception 'CHECK0 FAIL: is_own_customer missing or wrongly SECURITY DEFINER';
   end if;
-  raise notice 'CHECK0 PASS: 21 RLS tables, 61 policies, % SECURITY DEFINER functions all pinning search_path', v_definers;
+  raise notice 'CHECK0 PASS: 22 RLS tables, 61 policies, % SECURITY DEFINER functions all pinning search_path', v_definers;
 end $$;
 
 -- ---------------------------------------------------------------------------
@@ -1342,15 +1342,261 @@ begin
   raise notice 'CHECK12 PASS: permit roles/RLS isolated; active permit blocks reservations; cancel releases hold';
 end $$;
 
+-- CHECK0d: TRUNCATE ignores RLS and row triggers. Check deployed tables AND
+-- a new table, so a clean CI ACL cannot hide unsafe platform defaults.
+do $$
+declare v_leaks text;
+begin
+  select string_agg(c.relname || ':' || r.role_name, ', ' order by c.relname, r.role_name)
+    into v_leaks
+    from pg_class c join pg_namespace n on n.oid = c.relnamespace
+    cross join (values ('anon'),('authenticated'),('service_role')) r(role_name)
+   where n.nspname = 'public' and c.relkind in ('r','p')
+     and not exists (select 1 from pg_depend d where d.classid = 'pg_class'::regclass and d.objid = c.oid and d.deptype = 'e')
+     and has_table_privilege(r.role_name, c.oid, 'TRUNCATE');
+  if v_leaks is not null then
+    raise exception 'CHECK0d FAIL: client TRUNCATE bypasses tenant isolation: %', v_leaks;
+  end if;
+  create table public.verifier_truncate_default_probe(id integer);
+  if has_table_privilege('anon', 'public.verifier_truncate_default_probe', 'TRUNCATE')
+     or has_table_privilege('authenticated', 'public.verifier_truncate_default_probe', 'TRUNCATE')
+     or has_table_privilege('service_role', 'public.verifier_truncate_default_probe', 'TRUNCATE') then
+    raise exception 'CHECK0d FAIL: newly created tables inherit client TRUNCATE';
+  end if;
+  drop table public.verifier_truncate_default_probe;
+  set local role authenticated;
+  begin
+    truncate public.memberships;
+    raise exception 'CHECK0d FAIL: authenticated truncated memberships';
+  exception when insufficient_privilege then null;
+  end;
+  reset role;
+  raise notice 'CHECK0d PASS: existing and future application tables refuse client TRUNCATE';
+end $$;
+
+-- CHECK13: last ACTIVE admin is protected at the table boundary, including
+-- writes through other RPCs. Positive controls permit non-last removal.
+do $$
+declare
+  v_admin uuid := '00000000-0000-0000-0000-0000000000a1';
+  v_other uuid := '00000000-0000-0000-0000-0000000000a2';
+  v_org uuid := 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+  v_sql text;
+begin
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000a1","role":"authenticated"}', true);
+  perform set_config('request.jwt.claim.sub', v_admin::text, true);
+  set local role authenticated;
+  foreach v_sql in array array[
+    format('delete from public.memberships where org_id = %L and user_id = %L', v_org, v_admin),
+    format('update public.memberships set role = ''manager'' where org_id = %L and user_id = %L', v_org, v_admin)
+  ] loop
+    begin
+      execute v_sql;
+      raise exception 'CHECK13 FAIL: last admin membership removal/demotion succeeded';
+    exception when check_violation then
+      if sqlerrm <> 'LAST_ACTIVE_ADMIN_REQUIRED' then raise; end if;
+    end;
+  end loop;
+  reset role;
+
+  -- Privileged callers and auth-user cascades must obey the same invariant.
+  foreach v_sql in array array[
+    format('update public.memberships set org_id = ''bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb'' where org_id = %L and user_id = %L', v_org, v_admin),
+    format('delete from auth.users where id = %L', v_admin),
+    format('insert into public.account_status(user_id,status) values (%L,''deactivated'')', v_admin)
+  ] loop
+    begin
+      execute v_sql;
+      raise exception 'CHECK13 FAIL: reassignment/deletion/deactivation removed the last active admin';
+    exception when check_violation then
+      if sqlerrm <> 'LAST_ACTIVE_ADMIN_REQUIRED' then raise; end if;
+    end;
+  end loop;
+
+  update public.memberships set role = 'admin' where org_id = v_org and user_id = v_other;
+  -- An unusable second admin is not a recovery path.
+  insert into public.account_status(user_id,status) values (v_other,'deactivated');
+  begin
+    delete from public.memberships where org_id = v_org and user_id = v_admin;
+    raise exception 'CHECK13 FAIL: a deactivated admin was counted as a usable replacement';
+  exception when check_violation then
+    if sqlerrm <> 'LAST_ACTIVE_ADMIN_REQUIRED' then raise; end if;
+  end;
+  delete from public.account_status where user_id = v_other;
+  delete from public.memberships where org_id = v_org and user_id = v_admin;
+  if not found then raise exception 'CHECK13 FAIL: non-last admin was not removed'; end if;
+  if (select count(*) from public.memberships where org_id = v_org and role = 'admin') <> 1 then
+    raise exception 'CHECK13 FAIL: expected one remaining admin';
+  end if;
+  raise notice 'CHECK13 PASS: last active admin protected; non-last admin removal allowed';
+end $$;
+
+-- CHECK14: invitations bind to the authenticated user's actual email.
+do $$
+declare
+  v_user uuid := 'ae000000-0000-0000-0000-000000000001';
+  v_token uuid := 'ae000000-0000-0000-0000-000000000002';
+  v_email text;
+  v_org uuid;
+begin
+  insert into auth.users(id,aud,role,email)
+  values (v_user,'authenticated','authenticated',null);
+  insert into public.invites(org_id,email,role,token,invited_by)
+  values ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa','intended@example.test','admin',
+          v_token,'00000000-0000-0000-0000-0000000000a1');
+  foreach v_email in array array[null::text, 'different@example.test'] loop
+    update auth.users set email = v_email where id = v_user;
+    perform set_config('request.jwt.claims',
+      '{"sub":"ae000000-0000-0000-0000-000000000001","role":"authenticated"}', true);
+    perform set_config('request.jwt.claim.sub', v_user::text, true);
+    set local role authenticated;
+    begin
+      perform public.accept_invite(v_token);
+      raise exception 'CHECK14 FAIL: missing or mismatched email accepted an admin invitation';
+    exception when sqlstate 'P0001' then
+      if sqlerrm <> 'INVITE_EMAIL_MISMATCH' then raise; end if;
+    end;
+    reset role;
+    if exists (select 1 from public.memberships where user_id = v_user)
+       or exists (select 1 from public.profiles where id = v_user)
+       or exists (select 1 from public.invites where token = v_token and accepted_at is not null) then
+      raise exception 'CHECK14 FAIL: rejected invite left membership/profile/acceptance writes';
+    end if;
+  end loop;
+  update auth.users set email = 'INTENDED@example.test' where id = v_user;
+  set local role authenticated;
+  select public.accept_invite(v_token) into v_org;
+  reset role;
+  if v_org is distinct from 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'::uuid
+     or (select count(*) from public.memberships where user_id = v_user and org_id = v_org and role = 'admin') <> 1
+     or (select count(*) from public.profiles where id = v_user and org_id = v_org) <> 1
+     or (select count(*) from public.invites where token = v_token and accepted_at is not null) <> 1 then
+    raise exception 'CHECK14 FAIL: matching email did not accept atomically';
+  end if;
+  raise notice 'CHECK14 PASS: null/wrong email refused without writes; matching email accepted atomically';
+end $$;
+
+-- CHECK15: account lockout also applies to onboarding SECURITY DEFINER paths.
+do $$
+declare
+  v_user uuid := 'ae000000-0000-0000-0000-000000000003';
+  v_sql text;
+  v_calls text[] := array[
+    'select public.create_organization_with_admin(''__DEACTIVATED_ORG__'')',
+    'select * from public.public_ensure_customer(''11111111-1111-1111-1111-111111111111'',''Disabled customer'')',
+    'select public.accept_invite(''ae000000-0000-0000-0000-000000000004'')'
+  ];
+begin
+  insert into auth.users(id,aud,role,email)
+  values (v_user,'authenticated','authenticated','disabled@example.test');
+  insert into public.account_status(user_id,status) values (v_user,'deactivated');
+  insert into public.invites(org_id,email,role,token,invited_by)
+  values ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa','disabled@example.test','attendant',
+          'ae000000-0000-0000-0000-000000000004','00000000-0000-0000-0000-0000000000a1');
+  perform set_config('request.jwt.claims',
+    '{"sub":"ae000000-0000-0000-0000-000000000003","role":"authenticated"}',true);
+  perform set_config('request.jwt.claim.sub',v_user::text,true);
+  foreach v_sql in array v_calls loop
+    set local role authenticated;
+    begin
+      execute v_sql;
+      raise exception 'CHECK15 FAIL: deactivated identity executed %', v_sql;
+    exception when sqlstate 'P0001' then
+      if sqlerrm <> 'ACCOUNT_DEACTIVATED' then raise; end if;
+    end;
+    reset role;
+  end loop;
+  if exists (select 1 from public.customers where user_id = v_user)
+     or exists (select 1 from public.memberships where user_id = v_user)
+     or exists (select 1 from public.profiles where id = v_user) then
+    raise exception 'CHECK15 FAIL: deactivated onboarding left identity records';
+  end if;
+
+  delete from public.account_status where user_id = v_user;
+  foreach v_sql in array v_calls loop
+    begin
+      set local role authenticated;
+      execute v_sql;
+      reset role;
+      if v_sql like '%public_ensure_customer%' then
+        if (select count(*) from public.customers where user_id = v_user and org_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa') <> 1 then
+          raise exception 'CHECK15 FAIL: active customer onboarding wrote no own customer';
+        end if;
+      elsif (select count(*) from public.memberships where user_id = v_user) <> 1
+         or (select count(*) from public.profiles where id = v_user) <> 1 then
+        raise exception 'CHECK15 FAIL: active staff onboarding did not create membership/profile';
+      end if;
+      raise exception '__ACTIVE_ONBOARDING_ROLLBACK__';
+    exception when sqlstate 'P0001' then
+      reset role;
+      if sqlerrm <> '__ACTIVE_ONBOARDING_ROLLBACK__' then raise; end if;
+    end;
+  end loop;
+  raise notice 'CHECK15 PASS: all three onboarding RPCs enforce deactivation and allow active accounts';
+end $$;
+
+-- CHECK16: execute the receipt service's real table/sequence path under its
+-- native SQL role, then test both own-org access and a foreign-tenant probe.
+do $$
+declare
+  v_res uuid := 'ae000000-0000-0000-0000-000000000010';
+  v_payment uuid := 'ae000000-0000-0000-0000-000000000011';
+  v_receipt uuid;
+  v_number text;
+  v_count integer;
+begin
+  insert into public.reservations(id,org_id,facility_id,space_id,customer_id,during,status,booking_code,price_breakdown,total_cents)
+  select v_res, s.org_id, z.facility_id, s.id, 'ca000001-0000-0000-0000-000000000001',
+    tstzrange('2030-01-16 18:00:00+00','2030-01-16 19:00:00+00','[)'),
+    'confirmed','PKS-RCPTAA','{"currency":"USD","line_items":[],"total_cents":500}',500
+  from public.spaces s join public.zones z on z.id = s.zone_id
+  where z.facility_id = '11111111-1111-1111-1111-111111111111' order by s.id limit 1;
+  insert into public.payments(id,org_id,reservation_id,stripe_checkout_session_id,amount_cents,currency,status)
+  values (v_payment,'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',v_res,'cs_verifier_receipt_service',500,'USD','succeeded');
+  set local role service_role;
+  select count(*) into v_count from public.reservations r
+    join public.facilities f on f.id = r.facility_id
+    join public.spaces s on s.id = r.space_id
+    join public.zones z on z.id = s.zone_id
+    join public.customers c on c.id = r.customer_id
+   where r.id = v_res and r.total_cents = 500 and r.booking_code = 'PKS-RCPTAA'
+     and f.timezone = 'America/Los_Angeles' and c.org_id = r.org_id;
+  if v_count <> 1 then raise exception 'CHECK16 FAIL: service receipt details missing'; end if;
+  insert into public.receipts(org_id,reservation_id,payment_id,storage_path)
+  values ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',v_res,v_payment,'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa/verifier.pdf')
+  returning id, receipt_number into v_receipt, v_number;
+  if v_number is null or v_number not like 'RCPT-%' then
+    raise exception 'CHECK16 FAIL: receipt sequence did not generate a number';
+  end if;
+  reset role;
+  perform set_config('request.jwt.claims','{"sub":"00000000-0000-0000-0000-0000000000a2","role":"authenticated"}',true);
+  perform set_config('request.jwt.claim.sub','00000000-0000-0000-0000-0000000000a2',true);
+  set local role authenticated;
+  if (select count(*) from public.receipts where id = v_receipt) <> 1 then
+    raise exception 'CHECK16 FAIL: owning org cannot read its receipt';
+  end if;
+  reset role;
+  perform set_config('request.jwt.claims','{"sub":"00000000-0000-0000-0000-0000000000b1","role":"authenticated"}',true);
+  perform set_config('request.jwt.claim.sub','00000000-0000-0000-0000-0000000000b1',true);
+  set local role authenticated;
+  if (select count(*) from public.receipts where id = v_receipt) <> 0 then
+    raise exception 'CHECK16 FAIL: receipt leaked to another tenant';
+  end if;
+  reset role;
+  raise notice 'CHECK16 PASS: service receipt read/insert/sequence works; own org reads; foreign org denied';
+end $$;
+
 rollback;
 
 -- The Management API suppresses RAISE NOTICE output. If every assertion above
 -- completes, return an explicit, machine-visible summary for CI/manual evidence.
 select check_name, result
 from (values
-  ('CHECK0',  'PASS: 21 RLS tables, 61 policies, all definers pin search_path'),
+  ('CHECK0',  'PASS: 22 RLS tables, 61 policies, all definers pin search_path'),
   ('CHECK0b', 'PASS: authenticated has normal DML grants; permits is SELECT-only'),
   ('CHECK0c', 'PASS: payment writes and Stripe event processing are service-role-only'),
+  ('CHECK0d', 'PASS: client TRUNCATE revoked on existing and future application tables'),
   ('CHECK1',  'PASS: Org A sees exactly 2 facilities / 165 spaces, all Org A'),
   ('CHECK1b', 'PASS: Org B sees exactly 1 facility / 10 spaces, all Org B'),
   ('CHECK2',  'PASS: cross-org insert rejected by RLS with SQLSTATE 42501'),
@@ -1362,6 +1608,10 @@ from (values
   ('CHECK8',  'PASS: cross-customer cancel/extend denied; attendant override works; audit_log unforgeable'),
   ('CHECK9',  'PASS: payments isolated/read-only; webhook service role atomic and idempotent'),
   ('CHECK10', 'PASS: cross-org check-in/out denied; vehicle_photos + storage objects org-scoped'),
-  ('CHECK12', 'PASS: permit roles/RLS isolated; active permit blocks reservations; cancel releases hold')
+  ('CHECK12', 'PASS: permit roles/RLS isolated; active permit blocks reservations; cancel releases hold'),
+  ('CHECK13', 'PASS: last active admin protected; non-last admin removal allowed'),
+  ('CHECK14', 'PASS: null/wrong invite emails refused; matching email accepted atomically'),
+  ('CHECK15', 'PASS: deactivated onboarding refused; active onboarding preserved'),
+  ('CHECK16', 'PASS: service receipt dependencies explicit; receipt reads tenant-isolated')
 ) as checks(check_name, result)
 order by check_name;

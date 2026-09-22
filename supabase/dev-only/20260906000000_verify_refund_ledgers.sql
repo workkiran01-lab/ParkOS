@@ -389,7 +389,8 @@ begin
   -- full reversals only, and writing it as one would erase money still held.
   v_result := public.record_permit_refund(
     'evt_devtest_refund_partial', 'pi_devtest_refund_permit', 15000, 5000);
-  if v_result ->> 'outcome' <> 'partial_refund_not_supported' then
+  if v_result ->> 'outcome' is distinct from 'partial_refund_not_supported'
+     or v_result ->> 'processed' is distinct from 'false' then
     raise exception 'CHECK2 FAIL: a partial refund returned %', v_result;
   end if;
   select pp.status into v_status from public.permit_payments pp
@@ -502,6 +503,12 @@ select pg_temp.capture(3);
 do $$
 declare r record; v integer := 0;
 begin
+  if (select count(*) from expected) <> 4
+     or (select count(*) from actual) <> 4
+     or exists (select stage from expected except all select stage from actual)
+     or exists (select stage from actual except all select stage from expected) then
+    raise exception 'CHECK4 FAIL: refund matrix must contain each of stages 0 through 3 exactly once';
+  end if;
   for r in
     select e.stage, x.col, x.exp, x.got
       from expected e
