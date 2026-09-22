@@ -69,7 +69,11 @@ export const Route = createFileRoute('/app/override')({
 
 function Override() {
   const { role, org_id: orgId, loading: roleLoading } = useRole()
-  const { allFacilities: facilities } = useFacility()
+  const {
+    allFacilities: facilities,
+    loading: facilitiesLoading,
+    error: facilitiesError,
+  } = useFacility()
   const [holds, setHolds] = useState<HoldRow[]>([])
   const [reservations, setReservations] = useState<ResRow[]>([])
   const [audit, setAudit] = useState<AuditRow[]>([])
@@ -82,9 +86,14 @@ function Override() {
   const allowed = role === 'admin' || role === 'manager'
 
   const load = useCallback(async () => {
-    if (!orgId || !allowed) return
+    if (!orgId || !allowed || facilitiesLoading) return
     setLoading(true)
     setError(null)
+    if (facilitiesError) {
+      setError(facilitiesError.message)
+      setLoading(false)
+      return
+    }
 
     const [holdRes, resRes, auditRes] = await Promise.all([
       supabase
@@ -239,7 +248,7 @@ function Override() {
       })),
     )
     setLoading(false)
-  }, [orgId, allowed, facilities])
+  }, [orgId, allowed, facilities, facilitiesLoading, facilitiesError])
 
   useEffect(() => {
     if (!roleLoading) void Promise.resolve().then(load)
