@@ -68,7 +68,11 @@ export function formatInstantForFacility(
  * timestamp. A spring-forward gap is rejected. During a fall-back overlap,
  * the earlier occurrence is selected so the result is deterministic.
  */
-export function facilityInputToUtc(localValue: string, timeZone: string) {
+export function facilityInputToUtc(
+  localValue: string,
+  timeZone: string,
+  overlap: 'earlier' | 'later' = 'earlier',
+) {
   const local = parseLocal(localValue)
   if (!isValidIanaTimeZone(timeZone)) {
     throw new FacilityTimeError(
@@ -116,7 +120,9 @@ export function facilityInputToUtc(localValue: string, timeZone: string) {
     )
   }
 
-  return new Date(matches[0]).toISOString()
+  return new Date(
+    overlap === 'later' ? matches[matches.length - 1] : matches[0],
+  ).toISOString()
 }
 
 export function parseFacilityWindow(

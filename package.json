@@ -9,7 +9,7 @@
     "typecheck": "tsc -b",
     "typecheck:edge": "deno check --frozen supabase/functions/create-checkout-session/index.ts supabase/functions/create-permit-subscription/index.ts supabase/functions/receipt-download/index.ts supabase/functions/refund-payment/index.ts supabase/functions/stripe-webhook/index.ts",
     "test": "npm run check:sql && npm run test:unit",
-    "test:unit": "node --test scripts/check-sql-special-forms.test.mjs scripts/local-database.test.mjs src/lib/booking-validation.test.ts src/lib/checkin.test.ts src/lib/csv.test.ts src/lib/errors.test.ts src/lib/facility-time.test.ts src/lib/permit-cancel.test.ts src/lib/ticket.test.ts supabase/functions/_shared/qr.test.ts supabase/functions/_shared/receipt-content.test.ts supabase/functions/_shared/stripe-payload.test.ts supabase/functions/stripe-webhook/route.test.ts supabase/functions/stripe-webhook/handler.test.ts",
+    "test:unit": "node --test scripts/check-sql-special-forms.test.mjs scripts/local-database.test.mjs src/lib/booking-validation.test.ts src/lib/checkin.test.ts src/lib/csv.test.ts src/lib/errors.test.ts src/lib/facility-time.test.ts src/lib/permit-cancel.test.ts src/lib/ticket.test.ts supabase/functions/_shared/qr.test.ts supabase/functions/_shared/receipt-content.test.ts supabase/functions/_shared/stripe-payload.test.ts supabase/functions/stripe-webhook/route.test.ts supabase/functions/stripe-webhook/handler.test.ts src/lib/calendar.test.ts src/lib/customer-queries.test.ts",
     "test:sql-guard": "npm run check:sql && node --test scripts/check-sql-special-forms.test.mjs",
     "test:db": "node scripts/run-sql-verifiers.mjs --tier database",
     "test:financial": "node scripts/run-sql-verifiers.mjs --tier financial",
@@ -42,7 +42,8 @@
     "preview": "vite preview",
     "test:webhook-mutations": "node scripts/webhook-mutation-test.mjs",
     "test:sql-mutations": "node scripts/sql-mutation-test.mjs",
-    "test:db:all": "node scripts/run-full-sql-verification.mjs"
+    "test:db:all": "node scripts/run-full-sql-verification.mjs",
+    "test:queries": "node scripts/query-isolation.mjs --prove"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.112.3",

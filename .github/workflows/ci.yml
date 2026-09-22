@@ -85,6 +85,7 @@ jobs:
       - run: npm run db:seed:dev
       - name: Run all 17 SQL verifiers and prove fixture cleanup
         run: npm run test:db:all
+      - run: npm run test:queries
       - run: npm run test:correction-race
       - run: npm run test:last-admin
       - name: Concurrency test

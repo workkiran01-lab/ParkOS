@@ -1,16 +1,18 @@
-import { useCallback, useEffect, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useId, useState, type ReactNode } from 'react'
 import {
   createFileRoute,
   Link,
   Outlet,
   redirect,
   useNavigate,
+  useRouterState,
 } from '@tanstack/react-router'
 import {
   BarChart3,
   CalendarDays,
   CalendarPlus,
   ClipboardList,
+  ChevronDown,
   Gauge,
   LayoutDashboard,
   ParkingSquare,
@@ -19,6 +21,7 @@ import {
   SquareParking,
   TicketCheck,
   UserCog,
+  Users,
   Warehouse,
   type LucideIcon,
 } from 'lucide-react'
@@ -61,6 +64,40 @@ export const Route = createFileRoute('/app')({
 })
 
 function AppLayout() {
+  const pathname = useRouterState({
+    select: (state) => state.location.pathname,
+  })
+  const selectedCustomerId = /^\/app\/customers\/([^/]+)/.exec(pathname)?.[1]
+  const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>(
+    () => {
+      try {
+        const stored: unknown = JSON.parse(
+          sessionStorage.getItem('parkos.nav.groups') ?? '{}',
+        )
+        if (stored && typeof stored === 'object' && !Array.isArray(stored)) {
+          return Object.fromEntries(
+            Object.entries(stored).filter(
+              ([, value]) => typeof value === 'boolean',
+            ),
+          )
+        }
+      } catch {
+        /* Storage can be unavailable in a private browser session. */
+      }
+      return {}
+    },
+  )
+  function toggleGroup(label: string) {
+    setExpandedGroups((current) => {
+      const next = { ...current, [label]: current[label] === false }
+      try {
+        sessionStorage.setItem('parkos.nav.groups', JSON.stringify(next))
+      } catch {
+        /* Keep in-memory state. */
+      }
+      return next
+    })
+  }
   const navigate = useNavigate()
   const { user } = useAuth()
   const { role, org_id: orgId, full_name: fullName } = useRole()
@@ -141,17 +178,28 @@ function AppLayout() {
           hasCustomerRecord={hasCustomerRecord}
           onSignOut={signOut}
           sidebar={(collapsed) => (
-            <div className="space-y-6">
-              <NavGroup label="Overview" collapsed={collapsed}>
+            <div className="space-y-4">
+              {operations && (
                 <NavItem
-                  to="/app"
-                  label="Dashboard"
-                  icon={LayoutDashboard}
+                  to="/app/calendar"
+                  label="Calendar"
+                  icon={CalendarDays}
                   collapsed={collapsed}
                 />
-              </NavGroup>
+              )}
+              <NavItem
+                to="/app"
+                label="Dashboard"
+                icon={LayoutDashboard}
+                collapsed={collapsed}
+              />
               {operations && (
-                <NavGroup label="Booking" collapsed={collapsed}>
+                <NavGroup
+                  label="Booking"
+                  collapsed={collapsed}
+                  expanded={expandedGroups.Booking !== false}
+                  onToggle={toggleGroup}
+                >
                   <NavItem
                     to="/app/booking/manifest"
                     label="Daily Manifest"
@@ -164,22 +212,10 @@ function AppLayout() {
                     icon={CalendarPlus}
                     collapsed={collapsed}
                   />
-                  {/* Booth keeps its own full-screen layout outside AppShell;
-                    only its position in the sidebar moved. */}
                   <NavItem
-                    to="/attendant"
-                    label="Booth"
-                    icon={SquareParking}
-                    collapsed={collapsed}
-                  />
-                </NavGroup>
-              )}
-              {operations && (
-                <NavGroup label="Operations" collapsed={collapsed}>
-                  <NavItem
-                    to="/app/occupancy"
-                    label="Occupancy"
-                    icon={Gauge}
+                    to="/app/reservations"
+                    label="Reservations"
+                    icon={CalendarDays}
                     collapsed={collapsed}
                   />
                   <NavItem
@@ -189,25 +225,122 @@ function AppLayout() {
                     collapsed={collapsed}
                   />
                   <NavItem
-                    to="/app/reservations"
-                    label="Reservations"
-                    icon={CalendarDays}
+                    to="/attendant"
+                    label="Booth"
+                    icon={SquareParking}
                     collapsed={collapsed}
                   />
                 </NavGroup>
               )}
+              {role === 'admin' && (
+                <NavItem
+                  to="/app/staff"
+                  label="Employees"
+                  icon={UserCog}
+                  collapsed={collapsed}
+                />
+              )}
+              {operations && (
+                <NavGroup
+                  label="Customer"
+                  collapsed={collapsed}
+                  expanded={expandedGroups.Customer !== false}
+                  onToggle={toggleGroup}
+                >
+                  <NavGroup
+                    label="Directory"
+                    collapsed={collapsed}
+                    expanded={expandedGroups.Directory !== false}
+                    onToggle={toggleGroup}
+                  >
+                    <NavItem
+                      to="/app/customers"
+                      label="Customer"
+                      icon={Users}
+                      collapsed={collapsed}
+                    />
+                    {selectedCustomerId && (
+                      <>
+                        <Link
+                          to="/app/customers/$customerId"
+                          params={{ customerId: selectedCustomerId }}
+                          title="Customer ID"
+                          activeOptions={{ exact: true }}
+                          className={cn(
+                            'sidebar-nav-link',
+                            collapsed && 'justify-center px-0',
+                          )}
+                          activeProps={{ className: 'sidebar-nav-link-active' }}
+                        >
+                          <UserCog
+                            className="size-[17px] shrink-0"
+                            aria-hidden="true"
+                          />
+                          {!collapsed && <span>Customer ID</span>}
+                        </Link>
+                        <Link
+                          to="/app/customers/$customerId/books"
+                          params={{ customerId: selectedCustomerId }}
+                          title="Books"
+                          className={cn(
+                            'sidebar-nav-link',
+                            collapsed && 'justify-center px-0',
+                          )}
+                          activeProps={{ className: 'sidebar-nav-link-active' }}
+                        >
+                          <ClipboardList
+                            className="size-[17px] shrink-0"
+                            aria-hidden="true"
+                          />
+                          {!collapsed && <span>Books</span>}
+                        </Link>
+                      </>
+                    )}
+                  </NavGroup>
+                </NavGroup>
+              )}
+              {operations && (
+                <NavGroup
+                  label="Operations"
+                  collapsed={collapsed}
+                  expanded={expandedGroups.Operations !== false}
+                  onToggle={toggleGroup}
+                >
+                  <NavItem
+                    to="/app/occupancy"
+                    label="Occupancy"
+                    icon={Gauge}
+                    collapsed={collapsed}
+                  />
+                  {management && (
+                    <>
+                      <NavItem
+                        to="/app/permits"
+                        label="Permits"
+                        icon={TicketCheck}
+                        collapsed={collapsed}
+                      />
+                      <NavItem
+                        to="/app/reports"
+                        label="Reports"
+                        icon={BarChart3}
+                        collapsed={collapsed}
+                      />
+                    </>
+                  )}
+                </NavGroup>
+              )}
               {management && (
-                <NavGroup label="Management" collapsed={collapsed}>
+                <NavGroup
+                  label="Management"
+                  collapsed={collapsed}
+                  expanded={expandedGroups.Management !== false}
+                  onToggle={toggleGroup}
+                >
                   <NavItem
                     to="/app/facilities"
                     label="Facilities"
                     icon={Warehouse}
-                    collapsed={collapsed}
-                  />
-                  <NavItem
-                    to="/app/permits"
-                    label="Permits"
-                    icon={TicketCheck}
                     collapsed={collapsed}
                   />
                   <NavItem
@@ -216,28 +349,15 @@ function AppLayout() {
                     icon={SlidersHorizontal}
                     collapsed={collapsed}
                   />
-                  {role === 'admin' && (
-                    <NavItem
-                      to="/app/staff"
-                      label="Staff"
-                      icon={UserCog}
-                      collapsed={collapsed}
-                    />
-                  )}
-                </NavGroup>
-              )}
-              {management && (
-                <NavGroup label="Insights" collapsed={collapsed}>
-                  <NavItem
-                    to="/app/reports"
-                    label="Reports"
-                    icon={BarChart3}
-                    collapsed={collapsed}
-                  />
                 </NavGroup>
               )}
               {!facilitiesLoading && facilities.length === 0 && (
-                <NavGroup label="Setup" collapsed={collapsed}>
+                <NavGroup
+                  label="Setup"
+                  collapsed={collapsed}
+                  expanded={expandedGroups.Setup !== false}
+                  onToggle={toggleGroup}
+                >
                   <NavItem
                     to="/app/onboarding"
                     label="Onboarding"
@@ -259,27 +379,50 @@ function AppLayout() {
 function NavGroup({
   label,
   collapsed,
+  expanded,
+  onToggle,
   children,
 }: {
   label: string
   collapsed: boolean
+  expanded: boolean
+  onToggle: (label: string) => void
   children: ReactNode
 }) {
+  const contentId = useId()
   return (
-    <section>
-      {collapsed ? (
-        <div className="mx-auto mb-2 h-px w-5 bg-white/10" />
-      ) : (
-        <p className="mb-2 px-3 text-[9px] font-semibold uppercase tracking-[0.18em] text-sidebar-muted/70">
-          {label}
-        </p>
-      )}
-      <div className="space-y-1">{children}</div>
+    <section aria-label={label}>
+      <button
+        type="button"
+        aria-expanded={expanded}
+        aria-controls={contentId}
+        aria-label={label}
+        title={collapsed ? label : undefined}
+        onClick={() => onToggle(label)}
+        className={cn(
+          'mb-2 flex w-full items-center justify-between rounded-md px-3 py-2 text-xs font-semibold text-sidebar-muted hover:bg-white/5 focus-visible:outline-2 focus-visible:outline-sidebar-ring',
+          collapsed && 'justify-center px-0',
+        )}
+      >
+        {!collapsed && <span>{label}</span>}
+        <ChevronDown
+          className={cn(
+            'size-3.5 transition-transform',
+            !expanded && '-rotate-90',
+          )}
+          aria-hidden="true"
+        />
+      </button>
+      <div id={contentId} hidden={!expanded} className="space-y-1">
+        {children}
+      </div>
     </section>
   )
 }
 
 type AppPath =
+  | '/app/customers'
+  | '/app/calendar'
   | '/app'
   | '/app/booking/manifest'
   | '/app/booking/new'
@@ -307,7 +450,7 @@ function NavItem({
   return (
     <Link
       to={to}
-      activeOptions={{ exact: to === '/app' }}
+      activeOptions={{ exact: to === '/app' || to === '/app/customers' }}
       title={collapsed ? label : undefined}
       className={cn('sidebar-nav-link', collapsed && 'justify-center px-0')}
       activeProps={{ className: 'sidebar-nav-link-active' }}
