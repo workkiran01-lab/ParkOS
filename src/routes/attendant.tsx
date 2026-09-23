@@ -7,6 +7,7 @@ import {
   useNavigate,
 } from '@tanstack/react-router'
 import { PageSpinner } from '@/components/ui/Spinner'
+import { BoothAppLink } from '@/components/attendant/BoothAppLink'
 import { useRole } from '@/hooks/useRole'
 import {
   AttendantContext,
@@ -61,8 +62,7 @@ function AttendantLayout() {
     const list = (data ?? []) as AttendantFacility[]
     setFacilities(list)
     const stored = window.localStorage.getItem(FACILITY_KEY)
-    const initial =
-      list.find((f) => f.id === stored)?.id ?? list[0]?.id ?? null
+    const initial = list.find((f) => f.id === stored)?.id ?? list[0]?.id ?? null
     setFacilityId(initial)
     setLoading(false)
   }, [orgId])
@@ -97,12 +97,15 @@ function AttendantLayout() {
               <span className="text-lg font-semibold tracking-tight">
                 ParkOS Booth
               </span>
-              <button
-                onClick={signOut}
-                className="min-h-11 rounded-lg px-3 text-base font-medium text-muted-foreground hover:bg-muted"
-              >
-                Sign out
-              </button>
+              <div className="flex items-center gap-1">
+                <BoothAppLink />
+                <button
+                  onClick={signOut}
+                  className="min-h-11 rounded-lg px-3 text-base font-medium text-muted-foreground hover:bg-muted"
+                >
+                  Sign out
+                </button>
+              </div>
             </div>
 
             {facilities.length > 1 ? (
@@ -157,7 +160,9 @@ function AttendantTab({
       to={to}
       activeOptions={{ exact: to === '/attendant' }}
       className={`flex items-center justify-center rounded-lg border px-4 text-base font-medium ${tapTarget}`}
-      activeProps={{ className: 'bg-primary text-primary-foreground border-primary' }}
+      activeProps={{
+        className: 'bg-primary text-primary-foreground border-primary',
+      }}
       inactiveProps={{ className: 'bg-background hover:bg-muted' }}
     >
       {children}
