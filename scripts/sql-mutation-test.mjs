@@ -8,7 +8,81 @@ const root = fileURLToPath(new URL('../', import.meta.url))
 const url = assertLoopbackDatabaseUrl(process.env.PARKOS_TEST_DATABASE_URL)
 const invoiceVerifier =
   'supabase/dev-only/20260903000000_verify_invoice_paid.sql'
+const balanceVerifier =
+  'supabase/dev-only/20260923000000_verify_payment_balance.sql'
 const cases = [
+  ...[
+    [
+      'pending money ignored',
+      'reservation_payment_totals',
+      /case when p\.status = 'pending' then p\.amount_cents else 0 end/,
+      '0',
+      'BALANCE FAIL',
+    ],
+    [
+      'partial refunds treated as unpaid',
+      'reservation_payment_totals',
+      /when p\.status in \('succeeded', 'partially_refunded'\)/,
+      "when p.status = 'succeeded'",
+      'BALANCE FAIL',
+    ],
+    [
+      'refunded cents ignored',
+      'reservation_payment_totals',
+      /p\.amount_cents - coalesce\(p\.refunded_cents, 0\)/,
+      'p.amount_cents',
+      'BALANCE FAIL',
+    ],
+    [
+      'manifest uses gross total',
+      'facility_daily_manifest',
+      /paid\.collectable_cents,/,
+      'r.total_cents,',
+      'MANIFEST BALANCE FAIL',
+    ],
+    [
+      'booth guard removed',
+      'record_booth_payment',
+      /if p_amount_cents > v_balance then/,
+      'if false then',
+      'COLLECTION FAIL',
+    ],
+    [
+      'online guard removed',
+      'reserve_online_payment',
+      /if new\.amount_cents > v_available then/,
+      'if false then',
+      'ONLINE CLAIM FAIL',
+    ],
+    [
+      'terminal failure keeps funds locked',
+      'process_stripe_event',
+      /status = case when p\.status = 'pending' then 'failed' else p\.status end/,
+      'status = p.status',
+      'BALANCE FAIL',
+    ],
+    [
+      'retryable decline releases funds',
+      'process_stripe_event',
+      /v_outcome := 'payment_attempt_failed_checkout_open';/,
+      "update public.payments set status = 'failed' where id = v_payment.id; v_outcome := 'payment_attempt_failed_checkout_open';",
+      'BALANCE FAIL',
+    ],
+    [
+      'refund total regresses',
+      'process_stripe_event',
+      /greatest\(coalesce\(v_payment\.refunded_cents, 0\), p_amount_refunded_cents\)/,
+      'p_amount_refunded_cents',
+      'RAW MONEY FAIL',
+    ],
+  ].map(([label, fn, pattern, replacement, witness]) => ({
+    name: 'Payment balance: ' + label,
+    function: fn,
+    pattern,
+    replacement,
+    witness,
+    verifier: balanceVerifier,
+  })),
   ...[
     ['issuance', 'IP1', 'pending', ''],
     ['issuance', 'IP3', 'pending', ''],
@@ -437,9 +511,10 @@ const cases = [
   },
   {
     name: 'Manifest counts refunded booth money',
-    function: 'facility_daily_manifest',
-    pattern: /and bp\.status = 'succeeded'/,
-    replacement: '',
+    function: 'reservation_payment_totals',
+    pattern:
+      /case when bp\.status = 'succeeded' then bp\.amount_cents else 0 end/,
+    replacement: 'bp.amount_cents',
     verifier: 'supabase/dev-only/20260826010000_verify_daily_manifest.sql',
     witness: '2. paid_cents == raw booth+succeeded payments: FAIL',
   },

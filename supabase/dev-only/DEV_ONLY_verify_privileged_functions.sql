@@ -46,6 +46,7 @@ select * from (
     ('record_booth_payment', 'caller', 'tenant', '20260825010000_verify_booth_payments.sql'),
     ('record_permit_payment', 'service', 'tenant', '20260829000000_verify_permit_payments.sql'),
     ('record_permit_refund', 'service', 'tenant', '20260906000000_verify_refund_ledgers.sql'),
+    ('reserve_online_payment', 'internal', 'tenant', '20260923000000_verify_payment_balance.sql'),
     ('refund_booth_payment', 'caller', 'tenant', '20260906000000_verify_refund_ledgers.sql'),
     ('request_permit_cancellation', 'caller', 'tenant', 'DEV_ONLY_verify_permit_cancellation.sql'),
     ('reservation_balance_cents', 'caller', 'tenant', '20260825010000_verify_booth_payments.sql'),
