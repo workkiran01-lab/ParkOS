@@ -80,13 +80,14 @@ function AttendantSearch() {
         <input
           autoFocus
           className={bigInput}
+          aria-label="Booking code, plate, or name"
           placeholder="Booking code, plate, or name"
           value={term}
           autoCapitalize="characters"
           onChange={(event) => setTerm(event.target.value)}
         />
         <button type="submit" disabled={searching} className={bigButton}>
-          {searching ? 'Searching…' : 'Search'}
+          {searching ? 'Finding booking…' : 'Find booking'}
         </button>
       </form>
 

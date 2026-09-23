@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { createFileRoute, Link, redirect } from '@tanstack/react-router'
 import { toast } from 'sonner'
 import { TicketStub } from '@/components/reservations/TicketStub'
+import { BoothAppLink } from '@/components/attendant/BoothAppLink'
 import { PageSpinner } from '@/components/ui/Spinner'
 import {
   loadReservationByCode,
@@ -289,12 +290,15 @@ function Booth({
       <header className="border-b border-foreground/15">
         <div className="mx-auto flex max-w-xl items-center justify-between gap-4 px-4 py-3">
           <span className="signage-label">Booth · check in</span>
-          <Link
-            to="/attendant"
-            className="min-h-11 px-2 py-2 text-base font-semibold underline underline-offset-4"
-          >
-            Search
-          </Link>
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <BoothAppLink />
+            <Link
+              to="/attendant"
+              className="min-h-11 px-2 py-2 text-base font-semibold underline underline-offset-4"
+            >
+              Find another booking
+            </Link>
+          </div>
         </div>
       </header>
       <main className="mx-auto max-w-xl space-y-6 px-4 py-6">

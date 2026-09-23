@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { createFileRoute } from '@tanstack/react-router'
+import { createFileRoute, Link } from '@tanstack/react-router'
 import {
   PaymentStatusBadge,
   RefundPaymentButton,
@@ -7,6 +7,7 @@ import {
 import { DownloadReceiptButton } from '@/components/reservations/DownloadReceiptButton'
 import { ReservationActions } from '@/components/reservations/ReservationActions'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import {
   Card,
   CardContent,
@@ -33,6 +34,11 @@ import {
 import { useFacility } from '@/hooks/useFacility'
 import { useRole } from '@/hooks/useRole'
 import { friendlyError } from '@/lib/errors'
+import {
+  bookingPayment,
+  loadCustomerPayments,
+  type CustomerPayment,
+} from '@/lib/customer-queries'
 import { dollars } from '@/lib/format'
 import { formatRange, parseTstzrange } from '@/lib/holds'
 import { paymentsByReservation, type PaymentSummary } from '@/lib/payments'
@@ -57,10 +63,20 @@ type Row = {
   customer_phone: string | null
   license_plate: string | null
   payment: PaymentSummary | null
+  balance_cents: number
+  paid_cents: number
+  can_collect: boolean
 }
 
 const ANY = 'all'
-const statuses = ['pending', 'confirmed', 'cancelled', 'no_show', 'completed']
+const statuses = [
+  'pending',
+  'confirmed',
+  'active',
+  'cancelled',
+  'no_show',
+  'completed',
+]
 
 export const Route = createFileRoute('/app/reservations')({
   component: StaffReservations,
@@ -163,6 +179,26 @@ function StaffReservations() {
       return
     }
 
+    // The Stripe badge alone misses cash/card payments collected at the booth.
+    // Read both complete ledgers, using the same balance rule as Customer Books.
+    let ledgerRows: CustomerPayment[]
+    try {
+      const ledgers = await Promise.all([
+        loadCustomerPayments(supabase, orgId, reservationIds, 'payments'),
+        loadCustomerPayments(supabase, orgId, reservationIds, 'booth_payments'),
+      ])
+      ledgerRows = ledgers.flat()
+    } catch (error) {
+      setError(
+        friendlyError(
+          error,
+          'Payment balances could not be loaded. Please try again.',
+        ),
+      )
+      setLoading(false)
+      return
+    }
+
     const spaceNumber = new Map(
       (spaceRes.data ?? []).map((space) => [space.id, space.space_number]),
     )
@@ -180,27 +216,42 @@ function StaffReservations() {
     )
 
     setRows(
-      reservations.map((r) => ({
-        id: r.id,
-        booking_code: r.booking_code,
-        facility_id: r.facility_id,
-        space_id: r.space_id,
-        during: r.during,
-        status: r.status,
-        total_cents: r.total_cents,
-        currency: r.currency,
-        space_number: spaceNumber.get(r.space_id) ?? '—',
-        customer_name:
-          customerDetails.get(r.customer_id)?.full_name ?? 'Unknown',
-        customer_email: customerDetails.get(r.customer_id)?.email ?? null,
-        customer_phone: customerDetails.get(r.customer_id)?.phone ?? null,
-        license_plate: r.vehicle_id
-          ? (vehiclePlate.get(r.vehicle_id) ?? null)
-          : null,
-        facility_name: facilityName.get(r.facility_id) ?? 'Facility',
-        facility_timezone: facilityTimezone.get(r.facility_id) ?? '',
-        payment: paymentByReservation.get(r.id) ?? null,
-      })),
+      reservations.map((r) => {
+        const payments = ledgerRows.filter(
+          (payment) => payment.reservation_id === r.id,
+        )
+        const balance = bookingPayment(r.total_cents, payments)
+        return {
+          id: r.id,
+          booking_code: r.booking_code,
+          facility_id: r.facility_id,
+          space_id: r.space_id,
+          during: r.during,
+          status: r.status,
+          total_cents: r.total_cents,
+          currency: r.currency,
+          space_number: spaceNumber.get(r.space_id) ?? '—',
+          customer_name:
+            customerDetails.get(r.customer_id)?.full_name ?? 'Unknown',
+          customer_email: customerDetails.get(r.customer_id)?.email ?? null,
+          customer_phone: customerDetails.get(r.customer_id)?.phone ?? null,
+          license_plate: r.vehicle_id
+            ? (vehiclePlate.get(r.vehicle_id) ?? null)
+            : null,
+          facility_name: facilityName.get(r.facility_id) ?? 'Facility',
+          facility_timezone: facilityTimezone.get(r.facility_id) ?? '',
+          payment: paymentByReservation.get(r.id) ?? null,
+          balance_cents: balance.due,
+          paid_cents: balance.paid,
+          can_collect:
+            r.archived_at === null &&
+            ['pending', 'confirmed', 'active', 'completed'].includes(
+              r.status,
+            ) &&
+            balance.due > 0 &&
+            !payments.some((payment) => payment.status === 'pending'),
+        }
+      }),
     )
     setLoading(false)
   }, [orgId, allowed, facilities, facilitiesError, facilitiesLoading])
@@ -328,15 +379,38 @@ function StaffReservations() {
                           </Badge>
                         </TableCell>
                         <TableCell>
-                          <PaymentStatusBadge
-                            status={row.payment?.status ?? null}
-                          />
+                          {row.paid_cents > 0 && row.balance_cents > 0 ? (
+                            <Badge variant="secondary">Partially paid</Badge>
+                          ) : (
+                            <PaymentStatusBadge
+                              status={
+                                row.paid_cents > 0 && row.balance_cents === 0
+                                  ? 'succeeded'
+                                  : (row.payment?.status ?? null)
+                              }
+                            />
+                          )}
+                          {row.can_collect && (
+                            <p className="mt-1 text-xs text-muted-foreground">
+                              {dollars(row.balance_cents)} due
+                            </p>
+                          )}
                         </TableCell>
                         <TableCell className="text-right">
                           {dollars(row.total_cents)} {row.currency}
                         </TableCell>
                         <TableCell>
                           <div className="flex flex-wrap gap-2">
+                            {row.can_collect && (
+                              <Button size="sm" asChild>
+                                <Link
+                                  to="/checkin/$bookingCode"
+                                  params={{ bookingCode: row.booking_code }}
+                                >
+                                  Take payment
+                                </Link>
+                              </Button>
+                            )}
                             {start && end && (
                               <ReservationActions
                                 reservationId={row.id}

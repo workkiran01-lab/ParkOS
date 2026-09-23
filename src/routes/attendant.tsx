@@ -7,6 +7,7 @@ import {
   useNavigate,
 } from '@tanstack/react-router'
 import { PageSpinner } from '@/components/ui/Spinner'
+import { BoothAppLink } from '@/components/attendant/BoothAppLink'
 import { useRole } from '@/hooks/useRole'
 import {
   AttendantContext,
@@ -61,8 +62,7 @@ function AttendantLayout() {
     const list = (data ?? []) as AttendantFacility[]
     setFacilities(list)
     const stored = window.localStorage.getItem(FACILITY_KEY)
-    const initial =
-      list.find((f) => f.id === stored)?.id ?? list[0]?.id ?? null
+    const initial = list.find((f) => f.id === stored)?.id ?? list[0]?.id ?? null
     setFacilityId(initial)
     setLoading(false)
   }, [orgId])
@@ -90,19 +90,22 @@ function AttendantLayout() {
 
   return (
     <AttendantContext.Provider value={{ orgId: orgId!, facility }}>
-      <div className="min-h-screen bg-muted/30">
-        <header className="sticky top-0 z-10 border-b bg-background">
-          <div className="mx-auto flex max-w-xl flex-col gap-3 px-4 py-3">
+      <div className="min-h-screen bg-background">
+        <main className="mx-auto max-w-xl px-4 py-5">
+          <header className="mb-5 space-y-4">
             <div className="flex items-center justify-between gap-3">
               <span className="text-lg font-semibold tracking-tight">
                 ParkOS Booth
               </span>
-              <button
-                onClick={signOut}
-                className="min-h-11 rounded-lg px-3 text-base font-medium text-muted-foreground hover:bg-muted"
-              >
-                Sign out
-              </button>
+              <div className="flex items-center gap-1">
+                <BoothAppLink />
+                <button
+                  onClick={signOut}
+                  className="min-h-11 rounded-lg px-3 text-base font-medium text-muted-foreground hover:bg-muted"
+                >
+                  Sign out
+                </button>
+              </div>
             </div>
 
             {facilities.length > 1 ? (
@@ -124,14 +127,13 @@ function AttendantLayout() {
               </span>
             )}
 
-            <nav className="grid grid-cols-2 gap-2">
-              <AttendantTab to="/attendant">Search</AttendantTab>
-              <AttendantTab to="/attendant/active">Active</AttendantTab>
+            <nav aria-label="Booth views" className="grid grid-cols-2 gap-2">
+              <AttendantTab to="/attendant">Check in</AttendantTab>
+              <AttendantTab to="/attendant/active">
+                Checked-in vehicles
+              </AttendantTab>
             </nav>
-          </div>
-        </header>
-
-        <main className="mx-auto max-w-xl px-4 py-5">
+          </header>
           {facility ? (
             <Outlet />
           ) : (
@@ -157,7 +159,9 @@ function AttendantTab({
       to={to}
       activeOptions={{ exact: to === '/attendant' }}
       className={`flex items-center justify-center rounded-lg border px-4 text-base font-medium ${tapTarget}`}
-      activeProps={{ className: 'bg-primary text-primary-foreground border-primary' }}
+      activeProps={{
+        className: 'bg-primary text-primary-foreground border-primary',
+      }}
       inactiveProps={{ className: 'bg-background hover:bg-muted' }}
     >
       {children}
