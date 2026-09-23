@@ -14,6 +14,7 @@ export type ReservationRecord = {
   currency: string
   checked_in_at: string | null
   checked_out_at: string | null
+  archived_at: string | null
 }
 
 /** Shared with the existing reservation ledger. Never rely on the UI's scope. */
@@ -22,7 +23,7 @@ export function reservationQuery(client: SupabaseClient, orgId: string) {
   return client
     .from('reservations')
     .select(
-      'id, org_id, booking_code, facility_id, space_id, customer_id, vehicle_id, during, status, total_cents, currency, checked_in_at, checked_out_at',
+      'id, org_id, booking_code, facility_id, space_id, customer_id, vehicle_id, during, status, total_cents, currency, checked_in_at, checked_out_at, archived_at',
     )
     .eq('org_id', orgId)
 }
