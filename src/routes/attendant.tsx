@@ -90,9 +90,9 @@ function AttendantLayout() {
 
   return (
     <AttendantContext.Provider value={{ orgId: orgId!, facility }}>
-      <div className="min-h-screen bg-muted/30">
-        <header className="sticky top-0 z-10 border-b bg-background">
-          <div className="mx-auto flex max-w-xl flex-col gap-3 px-4 py-3">
+      <div className="min-h-screen bg-background">
+        <main className="mx-auto max-w-xl px-4 py-5">
+          <header className="mb-5 space-y-4">
             <div className="flex items-center justify-between gap-3">
               <span className="text-lg font-semibold tracking-tight">
                 ParkOS Booth
@@ -127,16 +127,13 @@ function AttendantLayout() {
               </span>
             )}
 
-            <nav className="grid grid-cols-2 gap-2">
+            <nav aria-label="Booth views" className="grid grid-cols-2 gap-2">
               <AttendantTab to="/attendant">Check in</AttendantTab>
               <AttendantTab to="/attendant/active">
                 Checked-in vehicles
               </AttendantTab>
             </nav>
-          </div>
-        </header>
-
-        <main className="mx-auto max-w-xl px-4 py-5">
+          </header>
           {facility ? (
             <Outlet />
           ) : (
