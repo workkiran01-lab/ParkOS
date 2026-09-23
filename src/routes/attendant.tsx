@@ -128,8 +128,10 @@ function AttendantLayout() {
             )}
 
             <nav className="grid grid-cols-2 gap-2">
-              <AttendantTab to="/attendant">Search</AttendantTab>
-              <AttendantTab to="/attendant/active">Active</AttendantTab>
+              <AttendantTab to="/attendant">Check in</AttendantTab>
+              <AttendantTab to="/attendant/active">
+                Checked-in vehicles
+              </AttendantTab>
             </nav>
           </div>
         </header>

@@ -296,7 +296,7 @@ function Booth({
               to="/attendant"
               className="min-h-11 px-2 py-2 text-base font-semibold underline underline-offset-4"
             >
-              Search
+              Find another booking
             </Link>
           </div>
         </div>
