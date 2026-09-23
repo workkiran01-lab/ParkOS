@@ -50,6 +50,8 @@ and that [expired sessions cannot be paid](https://docs.stripe.com/api/checkout/
 
 Customer Books uses the same arithmetic and distinguishes pending payments and
 refunds needing reconciliation. The four medium UI findings below are unchanged.
+The manifest labels an unpaid zero-collectable booking “Collection on hold”;
+only retained settled money covering the total earns its “Paid” label.
 
 ## Independent cent oracles
 

@@ -210,8 +210,10 @@ function DailyManifest() {
                         {formatInZone(row.ends_at, timezone)}
                       </TableCell>
                       <TableCell>
-                        {row.balance_cents === 0 ? (
+                        {row.paid_cents >= row.total_cents ? (
                           <Badge variant="secondary">Paid</Badge>
+                        ) : row.balance_cents === 0 ? (
+                          <Badge variant="outline">Collection on hold</Badge>
                         ) : (
                           <Badge variant="destructive">
                             {dollars(row.balance_cents)} due
