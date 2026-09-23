@@ -1,4 +1,5 @@
 import type Stripe from 'npm:stripe@22.6.0'
+import { createClaimedCheckout } from './claim.ts'
 import {
   AuthenticationError,
   ConfigurationError,
@@ -119,12 +120,22 @@ Deno.serve(async (request) => {
       )
     }
 
+    async function releasePayment(id: string) {
+      const { error } = await adminClient
+        .from('payments')
+        .update({ status: 'failed' })
+        .eq('id', id)
+        .eq('status', 'pending')
+      if (error) throw error
+    }
+
     const existing = await findExistingCheckout(
       stripe,
       (pendingData ?? []) as PendingPayment[],
       reservation,
       successUrl,
       cancelUrl,
+      releasePayment,
     )
     if (existing?.kind === 'reusable') {
       return jsonResponse({
@@ -135,11 +146,21 @@ Deno.serve(async (request) => {
     }
     if (existing?.kind === 'confirming') {
       return errorResponse(
-        'Payment was received and is still being confirmed.',
+        'A payment attempt is still pending or needs reconciliation before another payment can start.',
         409,
       )
     }
 
+    const { data: collectable, error: balanceError } = await userClient.rpc(
+      'reservation_balance_cents',
+      { p_reservation_id: reservation.id },
+    )
+    if (balanceError || !Number.isInteger(collectable) || collectable <= 0) {
+      return errorResponse(
+        'No collectable balance is available. A payment may be pending or need reconciliation.',
+        409,
+      )
+    }
     const paymentId = crypto.randomUUID()
     const metadata = {
       payment_id: paymentId,
@@ -147,72 +168,64 @@ Deno.serve(async (request) => {
       org_id: reservation.org_id,
     }
 
-    let session: Stripe.Checkout.Session
     try {
-      session = await stripe.checkout.sessions.create(
-        {
-          mode: 'payment',
-          payment_method_types: ['card'],
-          client_reference_id: reservation.id,
-          line_items: [
-            {
-              quantity: 1,
-              price_data: {
-                currency: reservation.currency.toLowerCase(),
-                unit_amount: reservation.total_cents,
-                product_data: { name: 'ParkOS parking reservation' },
-              },
-            },
-          ],
-          metadata,
-          payment_intent_data: { metadata },
-          success_url: successUrl,
-          cancel_url: cancelUrl,
+      const url = await createClaimedCheckout({
+        reserve: async () => {
+          const { error } = await adminClient.from('payments').insert({
+            id: paymentId,
+            org_id: reservation.org_id,
+            reservation_id: reservation.id,
+            stripe_checkout_session_id: 'parkos_pending:' + paymentId,
+            amount_cents: collectable,
+            currency: reservation.currency.toUpperCase(),
+            status: 'pending',
+          })
+          if (error) throw error
         },
-        { idempotencyKey: `parkos-checkout:${reservation.id}:${paymentId}` },
-      )
+        create: () =>
+          stripe.checkout.sessions.create(
+            {
+              mode: 'payment',
+              payment_method_types: ['card'],
+              client_reference_id: reservation.id,
+              line_items: [
+                {
+                  quantity: 1,
+                  price_data: {
+                    currency: reservation.currency.toLowerCase(),
+                    unit_amount: collectable,
+                    product_data: { name: 'ParkOS parking reservation' },
+                  },
+                },
+              ],
+              metadata,
+              payment_intent_data: { metadata },
+              success_url: successUrl,
+              cancel_url: cancelUrl,
+            },
+            {
+              idempotencyKey:
+                'parkos-checkout:' + reservation.id + ':' + paymentId,
+            },
+          ),
+        attach: async (id) => {
+          const { error } = await adminClient
+            .from('payments')
+            .update({ stripe_checkout_session_id: id })
+            .eq('id', paymentId)
+          if (error) throw error
+        },
+        expire: (id) => expireSessionQuietly(stripe, id),
+        release: () => releasePayment(paymentId),
+      })
+      return jsonResponse({ url, payment_id: paymentId, reused: false })
     } catch {
-      console.error('Stripe Checkout Session creation failed.')
+      console.error('Checkout reservation or creation failed.')
       return errorResponse(
-        'Secure checkout is temporarily unavailable. Please try again.',
+        'Checkout could not open. Any unconfirmed payment attempt must finish or be reconciled before collecting again.',
         502,
       )
     }
-
-    if (!session.url) {
-      await expireSessionQuietly(stripe, session.id)
-      return errorResponse(
-        'Secure checkout did not return a redirect address.',
-        502,
-      )
-    }
-
-    const { error: insertError } = await adminClient.from('payments').insert({
-      id: paymentId,
-      org_id: reservation.org_id,
-      reservation_id: reservation.id,
-      stripe_checkout_session_id: session.id,
-      amount_cents: reservation.total_cents,
-      currency: reservation.currency.toUpperCase(),
-      status: 'pending',
-    })
-
-    if (insertError) {
-      console.error(
-        'Pending payment insert failed; expiring its Checkout Session.',
-      )
-      await expireSessionQuietly(stripe, session.id)
-      return errorResponse(
-        'Checkout could not be saved. Please try again.',
-        500,
-      )
-    }
-
-    return jsonResponse({
-      url: session.url,
-      payment_id: paymentId,
-      reused: false,
-    })
   } catch (error) {
     if (error instanceof AuthenticationError)
       return errorResponse(error.message, 401)
@@ -232,9 +245,14 @@ async function findExistingCheckout(
   reservation: Reservation,
   successUrl: string,
   cancelUrl: string,
+  releasePayment: (id: string) => Promise<void>,
 ): Promise<ExistingCheckout> {
   for (const payment of pendingPayments) {
-    if (!payment.stripe_checkout_session_id) continue
+    if (
+      !payment.stripe_checkout_session_id ||
+      payment.stripe_checkout_session_id.startsWith('parkos_pending:')
+    )
+      return { kind: 'confirming' }
 
     let session: Stripe.Checkout.Session
     try {
@@ -243,14 +261,13 @@ async function findExistingCheckout(
       )
     } catch {
       console.warn('A pending Checkout Session could not be inspected.')
-      continue
+      return { kind: 'confirming' }
     }
 
     const safeToReuse =
-      payment.amount_cents === reservation.total_cents &&
       payment.currency.toUpperCase() === reservation.currency.toUpperCase() &&
       session.mode === 'payment' &&
-      session.amount_total === reservation.total_cents &&
+      session.amount_total === payment.amount_cents &&
       session.currency?.toUpperCase() === reservation.currency.toUpperCase() &&
       session.client_reference_id === reservation.id &&
       session.metadata?.payment_id === payment.id &&
@@ -264,8 +281,15 @@ async function findExistingCheckout(
     }
     if (safeToReuse && session.status === 'complete')
       return { kind: 'confirming' }
-    if (session.status === 'open')
-      await expireSessionQuietly(stripe, session.id)
+    if (
+      session.status === 'expired' ||
+      (session.status === 'open' &&
+        (await expireSessionQuietly(stripe, session.id)))
+    ) {
+      await releasePayment(payment.id)
+    } else {
+      return { kind: 'confirming' }
+    }
   }
 
   return null
@@ -273,8 +297,10 @@ async function findExistingCheckout(
 
 async function expireSessionQuietly(stripe: Stripe, sessionId: string) {
   try {
-    await stripe.checkout.sessions.expire(sessionId)
+    const session = await stripe.checkout.sessions.expire(sessionId)
+    return session.status === 'expired'
   } catch {
     console.warn('A Checkout Session could not be expired during cleanup.')
+    return false
   }
 }

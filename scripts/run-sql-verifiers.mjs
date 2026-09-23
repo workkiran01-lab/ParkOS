@@ -28,6 +28,7 @@ const tiers = {
     'supabase/dev-only/20260904000000_verify_dead_branch_removed.sql',
     'supabase/dev-only/20260905000000_verify_unresolved_payment.sql',
     'supabase/dev-only/20260906000000_verify_refund_ledgers.sql',
+    'supabase/dev-only/20260923000000_verify_payment_balance.sql',
   ],
 }
 

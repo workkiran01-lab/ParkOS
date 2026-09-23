@@ -28,6 +28,7 @@ export type CustomerPayment = {
   reservation_id: string
   amount_cents: number
   status: string
+  refunded_cents?: number | null
 }
 
 export async function readPages<T>(
@@ -115,7 +116,7 @@ export function loadCustomerBookings(
   )
 }
 
-/** Read both existing ledgers; sum only succeeded rows, as reservation_balance_cents does. */
+/** Read both ledgers, retaining refund amounts as well as payment state. */
 export async function loadCustomerPayments(
   client: SupabaseClient,
   orgId: string,
@@ -127,9 +128,16 @@ export async function loadCustomerPayments(
   for (let index = 0; index < reservationIds.length; index += 100) {
     rows.push(
       ...(await readPages<CustomerPayment>((start, end) =>
-        client
-          .from(table)
-          .select('id, org_id, reservation_id, amount_cents, status')
+        (table === 'payments'
+          ? client
+              .from('payments')
+              .select(
+                'id, org_id, reservation_id, amount_cents, status, refunded_cents',
+              )
+          : client
+              .from('booth_payments')
+              .select('id, org_id, reservation_id, amount_cents, status')
+        )
           .eq('org_id', orgId)
           .in('reservation_id', reservationIds.slice(index, index + 100))
           .order('id')
@@ -171,12 +179,31 @@ export function searchCustomers(
 }
 
 export function bookingPayment(total: number, payments: CustomerPayment[]) {
+  const needsReconciliation = payments.some(
+    (payment) =>
+      payment.status === 'partially_refunded' &&
+      (payment.refunded_cents == null || payment.refunded_cents === 0),
+  )
   const paid = payments
-    .filter((payment) => payment.status === 'succeeded')
+    .filter((payment) =>
+      ['succeeded', 'partially_refunded'].includes(payment.status),
+    )
+    .reduce(
+      (sum, payment) =>
+        sum +
+        (payment.status === 'partially_refunded' && !payment.refunded_cents
+          ? 0
+          : payment.amount_cents - (payment.refunded_cents ?? 0)),
+      0,
+    )
+  const pending = payments
+    .filter((payment) => payment.status === 'pending')
     .reduce((sum, payment) => sum + payment.amount_cents, 0)
   return {
     paid,
-    due: Math.max(0, total - paid),
+    pending,
+    needsReconciliation,
+    due: needsReconciliation ? 0 : Math.max(0, total - paid - pending),
     refunded: payments.some(
       (payment) =>
         payment.status === 'refunded' ||
