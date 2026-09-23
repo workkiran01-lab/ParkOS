@@ -266,7 +266,13 @@ export function CustomerRecord({
                             : 'font-medium'
                         }
                       >
-                        {payment.due ? `${dollars(payment.due)} due` : 'Paid'}
+                        {payment.needsReconciliation
+                          ? 'Refund needs reconciliation'
+                          : payment.due
+                            ? `${dollars(payment.due)} due`
+                            : payment.pending
+                              ? 'Payment pending'
+                              : 'Paid'}
                       </p>
                       <p className="mt-1 text-xs text-muted-foreground">
                         {dollars(payment.paid)} of{' '}
@@ -275,6 +281,11 @@ export function CustomerRecord({
                       {payment.refunded && (
                         <p className="mt-1 text-xs text-muted-foreground">
                           Includes refunded payment
+                        </p>
+                      )}
+                      {payment.pending > 0 && (
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          {dollars(payment.pending)} pending online
                         </p>
                       )}
                     </td>

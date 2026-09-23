@@ -60,8 +60,7 @@ values
 ('ba000000-0000-0000-0000-000000000014','aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa','ba000000-0000-0000-0000-000000000003','cs_balance_c2',300,'pending',0),
 ('ba000000-0000-0000-0000-000000000015','aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa','ba000000-0000-0000-0000-000000000004','cs_balance_d',1000,'partially_refunded',null),
 ('ba000000-0000-0000-0000-000000000016','aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa','ba000000-0000-0000-0000-000000000005','parkos_pending:ba000000-0000-0000-0000-000000000016',1000,'pending',0),
-('ba000000-0000-0000-0000-000000000017','aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa','ba000000-0000-0000-0000-000000000006','cs_balance_f1',1000,'partially_refunded',200),
-('ba000000-0000-0000-0000-000000000018','aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa','ba000000-0000-0000-0000-000000000006','cs_balance_f2',200,'pending',0);
+('ba000000-0000-0000-0000-000000000017','aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa','ba000000-0000-0000-0000-000000000006','cs_balance_f1',1000,'partially_refunded',200);
 insert into public.booth_payments(org_id,reservation_id,amount_cents,method,collected_by)
 values('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa','ba000000-0000-0000-0000-000000000003',200,'cash','00000000-0000-0000-0000-0000000000a1');
 
@@ -78,8 +77,8 @@ select pg_temp.expect_balance(3,700,300,0);
 select pg_temp.expect_balance(4,0,0,0);
 select pg_temp.refuse_collection(4,1);
 select pg_temp.expect_balance(5,0,1000,0);
-select pg_temp.expect_balance(6,800,200,0);
-select pg_temp.refuse_collection(6,1);
+select pg_temp.expect_balance(6,800,0,200);
+select pg_temp.refuse_collection(6,201);
 
 reset role;
 set local role service_role;
@@ -108,6 +107,16 @@ select public.process_stripe_event('balance_refund_200','charge.refunded','ba000
 select public.process_stripe_event('balance_expired','checkout.session.expired','ba000000-0000-0000-0000-000000000014',null,null,null,300,'USD');
 select public.process_stripe_event('balance_legacy_repaired','charge.refunded','ba000000-0000-0000-0000-000000000015',null,null,null,1000,'USD',300);
 select public.process_stripe_event('balance_completed','checkout.session.completed','ba000000-0000-0000-0000-000000000016',null,'cs_balance_e',null,1000,'USD');
+insert into public.payments(id,org_id,reservation_id,stripe_checkout_session_id,amount_cents,status)
+values('ba000000-0000-0000-0000-000000000018','aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa','ba000000-0000-0000-0000-000000000006','cs_balance_f2',200,'pending');
+reset role;
+set local role authenticated;
+select set_config('request.jwt.claims','{"sub":"00000000-0000-0000-0000-0000000000a1","role":"authenticated"}',true);
+select pg_temp.expect_balance(6,800,200,0);
+select pg_temp.refuse_collection(6,1);
+reset role;
+set local role service_role;
+select set_config('request.jwt.claims','{"role":"service_role"}',true);
 select public.process_stripe_event('balance_remainder_completed','checkout.session.completed','ba000000-0000-0000-0000-000000000018',null,'cs_balance_f2',null,200,'USD');
 do $$ begin
   if (select stripe_checkout_session_id from public.payments where id='ba000000-0000-0000-0000-000000000016') is distinct from 'cs_balance_e' then

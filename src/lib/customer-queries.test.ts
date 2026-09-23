@@ -47,7 +47,7 @@ test('directory searches name, email, formatted phone and normalized plate', () 
   assert.deepEqual(searchCustomers(customers, vehicles, 'no match'), [])
   assert.equal(searchCustomers(customers, vehicles, '').length, 2)
 })
-test('book payment includes both successful ledgers and excludes refunds and pending attempts', () => {
+test('pending attempts reserve collectable funds without being marked paid', () => {
   const rows = [
     { amount_cents: 300, status: 'succeeded' },
     { amount_cents: 200, status: 'succeeded' },
@@ -56,8 +56,52 @@ test('book payment includes both successful ledgers and excludes refunds and pen
   ] as CustomerPayment[]
   assert.deepEqual(bookingPayment(1000, rows), {
     paid: 500,
-    due: 500,
+    pending: 800,
+    needsReconciliation: false,
+    due: 0,
     refunded: true,
   })
   assert.equal(bookingPayment(100, rows).due, 0)
+})
+
+test('partial refunds retain the unrefunded money; failures release commitments', () => {
+  const partial = [
+    { amount_cents: 1000, status: 'partially_refunded', refunded_cents: 200 },
+  ] as CustomerPayment[]
+  assert.equal(bookingPayment(1000, partial).paid, 800)
+  assert.equal(bookingPayment(1000, partial).due, 200)
+  const pending = [
+    { amount_cents: 1000, status: 'pending' },
+  ] as CustomerPayment[]
+  assert.equal(bookingPayment(1000, pending).due, 0)
+  assert.equal(
+    bookingPayment(1000, [{ ...pending[0], status: 'failed' }]).due,
+    1000,
+  )
+  assert.equal(
+    bookingPayment(1000, [
+      { ...partial[0], status: 'refunded', refunded_cents: 1000 },
+    ]).due,
+    1000,
+  )
+})
+
+test('mixed ledgers and unknown historical refunds never manufacture collectable money', () => {
+  const rows = [
+    { amount_cents: 500, status: 'partially_refunded', refunded_cents: 100 },
+    { amount_cents: 200, status: 'succeeded' },
+    { amount_cents: 300, status: 'pending' },
+  ] as CustomerPayment[]
+  assert.deepEqual(bookingPayment(1000, rows), {
+    paid: 600,
+    pending: 300,
+    due: 100,
+    refunded: true,
+    needsReconciliation: false,
+  })
+  const unknown = bookingPayment(1000, [
+    { amount_cents: 1000, status: 'partially_refunded', refunded_cents: null },
+  ] as CustomerPayment[])
+  assert.equal(unknown.due, 0)
+  assert.equal(unknown.needsReconciliation, true)
 })
