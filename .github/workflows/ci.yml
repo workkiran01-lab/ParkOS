@@ -97,11 +97,12 @@ jobs:
             where table_schema = 'public' and grantee = 'service_role'
             order by table_name, privilege_type;
           SQL
-      - name: Run all 17 SQL verifiers and prove fixture cleanup
+      - name: Run all 18 SQL verifiers and prove fixture cleanup
         run: npm run test:db:all
       - run: npm run test:queries
       - run: npm run test:correction-race
       - run: npm run test:last-admin
+      - run: npm run test:payment-race
       - name: Concurrency test
         shell: bash
         run: |
